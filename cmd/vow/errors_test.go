@@ -193,6 +193,159 @@ type ID struct {
 	}
 }
 
+// TestRejections_NameCollision covers identifiers generation would declare
+// that the hand-written package already uses. Go catches these anyway, but
+// as a redeclaration error inside the generated file — code the user didn't
+// write; vow reports them against the declaration they can change.
+func TestRejections_NameCollision(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{
+			name: "parser var for a sanitized value object",
+			src: `package fixture
+import "github.com/mgiaccone/vow"
+var emailSpec = vow.Spec[string]{}
+var emailParser = "mine"
+type Email struct {
+	v string ` + bq + `vow:"sanitize=trim"` + bq + `
+}
+`,
+			want: `generated code declares emailParser, but that name is already declared at`,
+		},
+		{
+			name: "drop-sanitize remedy is offered for a parser collision",
+			src: `package fixture
+import "github.com/mgiaccone/vow"
+var emailSpec = vow.Spec[string]{}
+var emailParser = "mine"
+type Email struct {
+	v string ` + bq + `vow:"sanitize=trim"` + bq + `
+}
+`,
+			want: `drop sanitize= from the tag`,
+		},
+		{
+			name: "handwritten constructor",
+			src: `package fixture
+import "github.com/mgiaccone/vow"
+var emailSpec = vow.Spec[string]{}
+func NewEmail(s string) (Email, error) { return Email{}, nil }
+type Email struct {
+	v string ` + bq + `vow:"json"` + bq + `
+}
+`,
+			want: `generated code declares NewEmail, but that name is already declared at`,
+		},
+		{
+			name: "handwritten Must constructor",
+			src: `package fixture
+import "github.com/mgiaccone/vow"
+var emailSpec = vow.Spec[string]{}
+func MustEmail(s string) Email { return Email{} }
+type Email struct {
+	v string ` + bq + `vow:"json"` + bq + `
+}
+`,
+			want: `generated code declares MustEmail`,
+		},
+		{
+			name: "enum Values function",
+			src: `package fixture
+
+//vow:enum
+type Role string
+
+const (
+	RoleOwner Role = "owner"
+)
+
+func RoleValues() []Role { return nil }
+`,
+			want: `generated code declares RoleValues`,
+		},
+		{
+			name: "enum values slice",
+			src: `package fixture
+
+//vow:enum
+type Role string
+
+const (
+	RoleOwner  Role = "owner"
+	roleValues Role = "collides"
+)
+`,
+			want: `generated code declares roleValues`,
+		},
+		{
+			name: "enum parser var",
+			src: `package fixture
+
+//vow:enum
+type Role string
+
+const (
+	RoleOwner Role = "owner"
+)
+
+var roleParser = "mine"
+`,
+			want: `generated code declares roleParser`,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "types.go"), []byte(c.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := discoverPackage(dir, "fixture_vow_generated.go", "vow", "vow")
+			if err == nil {
+				t.Fatal("expected an error, got nil")
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("error = %q\nwant substring %q", err.Error(), c.want)
+			}
+		})
+	}
+}
+
+// TestNoCollision_MethodsAndUnsanitizedTypes guards the check against false
+// positives: a method named like a generated helper lives in its receiver's
+// namespace, not the package's, and a value object without sanitize=
+// generates no parser var at all, so an unrelated emailParser is fine.
+func TestNoCollision_MethodsAndUnsanitizedTypes(t *testing.T) {
+	src := `package fixture
+
+import "github.com/mgiaccone/vow"
+
+var emailSpec = vow.Spec[string]{}
+
+type Email struct {
+	v string ` + bq + `vow:"json"` + bq + `
+}
+
+type other struct{}
+
+// A method, not a package-level identifier: must not collide.
+func (other) NewEmail() {}
+
+// No sanitize= on Email, so no emailParser is generated.
+var emailParser = "unrelated"
+`
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "types.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := discoverPackage(dir, "fixture_vow_generated.go", "vow", "vow"); err != nil {
+		t.Fatalf("expected no collision, got: %v", err)
+	}
+}
+
 func TestNoTypesFound(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "types.go"), []byte("package fixture\n\nfunc Foo() int { return 1 }\n"), 0o644); err != nil {

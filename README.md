@@ -158,6 +158,14 @@ func (x T) Value() (driver.Value, error)     // if sql
 func (x *T) Scan(src any) error              // if sql
 ```
 
+`sql` emits the two `database/sql` interfaces and nothing else — no pgx,
+sqlx, ent, or GORM variants, and none are needed. pgx's `pgtype` falls back
+to `driver.Valuer` and `sql.Scanner` for types it doesn't recognize, so
+`sql`-generated types work with native pgx as they are.
+`example/types/types_test.go` asserts the interfaces are satisfied; it does
+not import pgx, since that would put a third-party dependency in this
+module.
+
 The membership rule behind `IsValid` and `New<T>` is generated from the enum's
 own `const` block, so the accepted set can never drift from the declared
 members.
@@ -197,14 +205,15 @@ Four things to know:
   fails to compile afterwards, pointing at the generated file.
 - **`spec=NAME` overrides the derivation**, which is how several types share
   one `Spec`.
-- **Some identifiers are reserved.** Beyond `New<T>`, `Must<T>`, and the
-  methods listed above, generation declares package-level variables. Declaring
-  one yourself is a redeclaration error in the generated file:
+- **Some identifiers are reserved.** Declaring one yourself is rejected with
+  the position of your declaration, rather than left to surface as a
+  redeclaration error inside the generated file:
 
   | Declaration | Reserved |
   |---|---|
+  | any tagged type or enum | `New<T>`, `Must<T>` |
   | value object with `sanitize=` | `<name>Parser` (e.g. `emailParser`) |
-  | enum | `<name>Parser`, `<name>Values` (e.g. `roleParser`, `roleValues`) |
+  | enum | `<T>Values`, `<name>Parser`, `<name>Values` (e.g. `RoleValues`, `roleParser`, `roleValues`) |
 
 **`//vow:enum` directive options:**
 

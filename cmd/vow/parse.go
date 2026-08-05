@@ -26,7 +26,7 @@ func discoverPackage(dir, outFile, tagKey, vowQualifier string) (*pkg, error) {
 		return nil, err
 	}
 
-	packageVars := collectPackageVars(files)
+	decls := collectPackageDecls(fset, files)
 	imports := newImportCollector()
 
 	var valueObjects []*valueObject
@@ -55,7 +55,7 @@ func discoverPackage(dir, outFile, tagKey, vowQualifier string) (*pkg, error) {
 				}
 
 				if st, ok := ts.Type.(*ast.StructType); ok {
-					vo, err := resolveValueObject(fset, table, ts, st, tagKey, packageVars, imports)
+					vo, err := resolveValueObject(fset, table, ts, st, tagKey, decls.vars, imports)
 					if err != nil {
 						return nil, err
 					}
@@ -109,6 +109,11 @@ func discoverPackage(dir, outFile, tagKey, vowQualifier string) (*pkg, error) {
 		enums = append(enums, e)
 	}
 	sort.Slice(enums, func(i, j int) bool { return enums[i].Name < enums[j].Name })
+
+	// After sorting, so which collision is reported first is deterministic.
+	if err := checkNameCollisions(decls, valueObjects, enums); err != nil {
+		return nil, err
+	}
 
 	return &pkg{
 		Name:          pkgName,
@@ -207,26 +212,94 @@ func derivePackageOutName(dir string) (string, error) {
 	return f.Name.Name + "_vow_generated.go", nil
 }
 
-func collectPackageVars(files []*ast.File) map[string]bool {
-	vars := map[string]bool{}
+// packageDecls indexes the hand-written package's declarations two ways:
+// vars resolves a spec= or derived spec variable name, and all holds every
+// package-level identifier — var, const, type, and func share one namespace
+// in Go — so generation can tell when it is about to redeclare one.
+type packageDecls struct {
+	vars map[string]bool
+	all  map[string]token.Position
+}
+
+func collectPackageDecls(fset *token.FileSet, files []*ast.File) packageDecls {
+	decls := packageDecls{vars: map[string]bool{}, all: map[string]token.Position{}}
+	record := func(ident *ast.Ident) {
+		if ident.Name == "_" {
+			return
+		}
+		if _, seen := decls.all[ident.Name]; !seen {
+			decls.all[ident.Name] = fset.Position(ident.Pos())
+		}
+	}
+
 	for _, f := range files {
 		for _, decl := range f.Decls {
-			gd, ok := decl.(*ast.GenDecl)
-			if !ok || gd.Tok != token.VAR {
-				continue
-			}
-			for _, spec := range gd.Specs {
-				vs, ok := spec.(*ast.ValueSpec)
-				if !ok {
-					continue
+			switch d := decl.(type) {
+			case *ast.FuncDecl:
+				if d.Recv != nil {
+					continue // a method lives in its receiver's namespace, not the package's
 				}
-				for _, name := range vs.Names {
-					vars[name.Name] = true
+				record(d.Name)
+			case *ast.GenDecl:
+				for _, spec := range d.Specs {
+					switch s := spec.(type) {
+					case *ast.ValueSpec:
+						for _, name := range s.Names {
+							if d.Tok == token.VAR {
+								decls.vars[name.Name] = true
+							}
+							record(name)
+						}
+					case *ast.TypeSpec:
+						record(s.Name)
+					}
 				}
 			}
 		}
 	}
-	return vars
+	return decls
+}
+
+// checkNameCollisions rejects a package that already declares an identifier
+// generation would declare itself. Go catches these anyway, but as a
+// redeclaration error inside the generated file — code the user did not
+// write and cannot fix. Reporting it here points at the declaration they
+// can actually change, and says which tag option is responsible.
+func checkNameCollisions(decls packageDecls, valueObjects []*valueObject, enums []*enumType) error {
+	claim := func(pos token.Position, typeName, generated, remedy string) error {
+		existing, taken := decls.all[generated]
+		if !taken {
+			return nil
+		}
+		return errAt(pos, typeName, "generated code declares %s, but that name is already declared at %s; %s",
+			generated, existing, remedy)
+	}
+
+	for _, vo := range valueObjects {
+		const rename = "rename the existing declaration"
+		for _, generated := range []string{"New" + vo.Name, "Must" + vo.Name} {
+			if err := claim(vo.Pos, vo.Name, generated, rename); err != nil {
+				return err
+			}
+		}
+		if parser := vo.ParserVar(); parser != "" {
+			if err := claim(vo.Pos, vo.Name, parser,
+				"rename the existing declaration, or drop sanitize= from the tag to stop generating a parser"); err != nil {
+				return err
+			}
+		}
+	}
+
+	for _, e := range enums {
+		const rename = "rename the existing declaration"
+		generated := []string{"New" + e.Name, "Must" + e.Name, e.Name + "Values", e.ParserVar(), e.ValuesVar()}
+		for _, name := range generated {
+			if err := claim(e.Pos, e.Name, name, rename); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // importTable maps a file's local package identifiers to their import

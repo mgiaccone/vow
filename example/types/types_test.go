@@ -12,11 +12,14 @@ import (
 )
 
 // Generated sql-flagged types satisfy database/sql/driver.Valuer and
-// database/sql.Scanner without any database-specific code in vow itself.
-// pgtype (pgx's type package) already implements Scan against the same
-// interface, so these types work with native pgx today — see the README's
-// "database-specific method sets" section for why that's a paragraph and a
-// test, not a feature.
+// database/sql.Scanner with no database-specific code in vow itself. pgx's
+// pgtype falls back to these same standard interfaces for types it doesn't
+// recognize, so sql-generated types work with native pgx as they are —
+// which is why pgx support is this assertion rather than a feature.
+//
+// This deliberately does not import pgx: proving compatibility that way
+// would put a third-party dependency in the module, and satisfying the
+// interfaces is the whole contract.
 var (
 	_ driver.Valuer = types.Email{}
 	_ sql.Scanner   = (*types.Email)(nil)
