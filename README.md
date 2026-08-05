@@ -84,6 +84,10 @@ type Email struct {
 }
 ```
 
+`Email` finds its rules through the **name** `emailSpec`, not through
+proximity or file layout — see [Naming](#naming). The two can live in
+different files of the same package.
+
 ```go
 //go:generate go tool vow -dir=.
 ```
@@ -170,10 +174,37 @@ members.
 | `sql` | Emit `Value` and `Scan`. |
 | `text` | Emit `MarshalText`. |
 
-The spec variable name is derived from the type name if `spec=` is absent:
-lowercase the leading run of capitals, keeping the capital that starts the
-next word, and append `Spec`. `Email` → `emailSpec`, `URLPath` →
-`urlPathSpec`, `URL` → `urlSpec`.
+### Naming
+
+A tagged type is matched to its `Spec` **by name**. With no `spec=` option,
+`vow` lowercases the leading run of capitals — keeping the capital that starts
+the next word — and appends `Spec`:
+
+| Type | Expected spec variable |
+|---|---|
+| `Email` | `emailSpec` |
+| `URLPath` | `urlPathSpec` |
+| `URL` | `urlSpec` |
+| `ID` | `idSpec` |
+
+Four things to know:
+
+- **The spec must be a package-level `var`.** Declared inside a function, or
+  in a `_test.go` file, it won't be found — `vow` errors and names the
+  variable it expected. It may live in any file of the package.
+- **Its type parameter must match the base type.** `vow` never type-checks, so
+  a `Spec[int]` paired with a `string` field generates without complaint and
+  fails to compile afterwards, pointing at the generated file.
+- **`spec=NAME` overrides the derivation**, which is how several types share
+  one `Spec`.
+- **Some identifiers are reserved.** Beyond `New<T>`, `Must<T>`, and the
+  methods listed above, generation declares package-level variables. Declaring
+  one yourself is a redeclaration error in the generated file:
+
+  | Declaration | Reserved |
+  |---|---|
+  | value object with `sanitize=` | `<name>Parser` (e.g. `emailParser`) |
+  | enum | `<name>Parser`, `<name>Values` (e.g. `roleParser`, `roleValues`) |
 
 **`//vow:enum` directive options:**
 
