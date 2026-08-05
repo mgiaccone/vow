@@ -4,23 +4,22 @@
 [![CI](https://github.com/mgiaccone/vow/actions/workflows/ci.yml/badge.svg)](https://github.com/mgiaccone/vow/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-> **vow** — value objects for Go. The name is a promise the value is valid;
-> it also happens to stand for *Validated On Write*, which is the rule the
-> whole design follows.
+> **vow** — value objects for Go. Short for *Validated On Write*: a value is
+> parsed once, at construction, and is unforgeable from then on.
 
 ## The problem
 
-Most Go code re-validates the same string or int every time it crosses a
-boundary — once in the HTTP handler, again before the SQL insert, again in
-the background job that reads it back. Each check is a slightly different
-regex, a slightly different message, and a slightly different bug, because
-nothing stops a value from existing without ever having passed one. `vow`
-moves validation to the one place it actually needs to happen: construction.
-A `vow.Spec` sanitizes and validates a value, and the generator turns it into
-a `New<T>` constructor that's the *only* way to produce a `T` — so once
-you're holding an `Email`, it is already valid, and stays that way for its
-entire life. It is not a struct validator: `vow` never reads a request struct
-or a `json` tag, only the individual values that go into one.
+The same string gets re-validated every time it crosses a boundary: once in
+the HTTP handler, again before the SQL insert, again in the job that reads it
+back. Nothing stops a value from existing without having passed any of them,
+so the checks drift apart and each becomes its own bug.
+
+`vow` moves validation to construction. A `vow.Spec` sanitizes and validates,
+and the generator turns it into the only constructor that can produce the
+type — so holding an `Email` means it is already valid.
+
+It is not a struct validator: `vow` never reads your request structs or their
+`json` tags, only the individual values that go into them.
 
 ## Table of contents
 
@@ -39,51 +38,33 @@ or a `json` tag, only the individual values that go into one.
 
 ## Install
 
-`vow` requires **Go 1.24 or later** — using it as a tool dependency needs
-1.24 either way, so the module's own floor doesn't add a separate
-constraint. The recommended path is a pinned tool dependency:
+Requires **Go 1.24+**. Add `vow` as a tool dependency:
 
 ```
 go get -tool github.com/mgiaccone/vow/cmd/vow@latest
 ```
 
-That adds a `tool` directive to your `go.mod`, separate from `require`. Then
-add a generate directive next to the types you're generating for:
+Then put a generate directive next to your types:
 
 ```go
 //go:generate go tool vow -dir=.
 ```
 
 `go tool` resolves the last path segment, so the invocation is just `vow`.
-The first run compiles the binary; later runs are cached, and contributors
-need nothing installed globally — `go generate ./...` after a clone just
-works, at the version this repository pins.
+The first run compiles the binary, later runs are cached, and a fresh clone
+needs nothing installed globally.
 
-The wart worth knowing about: tool dependencies share your module's
-dependency graph, so adding one *can* bump a version your application code
-also uses. `vow` has zero dependencies of its own, so adding it can never
-perturb anything else. That's the whole reason the zero-dependency
-constraint exists — feel it here.
+Tool dependencies share your module's dependency graph, so adding one can bump
+a version your application code also uses. `vow` has no dependencies, so it
+can't.
 
-If you'd rather not add a tool dependency, running it directly still works —
-but pin an explicit version, unlike the `go get -tool` command above:
+`go run` works too, but pin an explicit version — unlike `go get`, a generate
+directive re-resolves on every run, so `@latest` there means generated code
+that changes when upstream releases, breaking the CI check below:
 
 ```go
 //go:generate go run github.com/mgiaccone/vow/cmd/vow@vX.Y.Z -dir=.
 ```
-
-Replace `vX.Y.Z` with the version you're actually depending on (`go list -m
-github.com/mgiaccone/vow` shows it once you have one). This needs a
-`require` entry too (`go mod tidy` adds one). The asymmetry with `@latest`
-above is deliberate: `go get -tool ...@latest` resolves once and pins the
-result into `go.mod`, so it's reproducible from then on, but `go run
-...@latest` inside a generate directive re-resolves on *every* invocation —
-generated code that changes because upstream released while you were at
-lunch isn't reproducible, and it breaks the `git diff --exit-code` CI check
-below. Prefer `go tool` when you can.
-
-This repository dogfoods the `tool` path for its own `example/` package —
-see this module's own `go.mod`.
 
 ## Quickstart: a value object
 
@@ -246,7 +227,7 @@ Output is one file per package — not configurable, and never deleted.
 ## Reporting several failures at once
 
 `Spec.Parse` is fail-fast: one value, one reason. Reporting several fields at
-once — a command with three inputs, say — is `vow.Collector`'s job:
+once is `vow.Collector`'s job:
 
 ```go
 var c vow.Collector
@@ -259,21 +240,17 @@ return cmd, c.Err()
 ```
 
 `Collect` runs a constructor and records any failure against a `Field`,
-returning the zero value on failure — check `c.Err()` (or, on a generated
-type, `IsZero`) before trusting the result. `vow.FieldErrors(err)` walks the
-joined error and returns every `FieldError` in it — use this instead of
-`errors.As`, which stops at the first match in a joined error and silently
-drops the rest. See `example/invite.go` for the full constructor, including
-the one rule a per-type generator can't express on its own: the invitee must
-not be the inviter.
+returning the zero value on failure — check `c.Err()` (or `IsZero`) before
+trusting the result. `vow.FieldErrors(err)` walks the joined error and returns
+every `FieldError` in it; use it instead of `errors.As`, which stops at the
+first match and silently drops the rest. `example/invite.go` has the full
+constructor, including the rule a per-type generator can't express: the
+invitee must not be the inviter.
 
-Mapping a `vow.Field` to a wire name is the last hop, and it belongs in your
-transport adapter — the only layer that knows the wire format. Illustration,
-not part of vow's API:
+Mapping a `vow.Field` to a wire name belongs in your transport adapter, the
+only layer that knows the wire format. Illustration, not part of vow's API:
 
 ```go
-// Illustration only. Mapping vow.Field to wire names is the transport
-// adapter's job, not vow's — it's the only layer that knows the format.
 var wireNames = map[vow.Field]string{
 	FieldInviter: "inviter_email",
 	FieldInvitee: "invitee_email",
@@ -313,79 +290,65 @@ type Role string
 ```
 
 **No `UnmarshalJSON`.** Its signature carries a byte slice and nothing else,
-so a decode failure can't identify which field broke, and can't join a
-`Collector` result. Decode into a string DTO and call `New<T>` where the
-field is known.
+so a decode failure can't say which field broke or join a `Collector` result.
+Decode into a string DTO and call `New<T>` where the field is known.
 
-**`Scan` does not validate.** If a rule is later tightened or an enum member
-retired, re-validating on read would make historical rows unloadable —
-including the rows you'd need to load to fix them. Validate at the boundary,
-trust storage.
+**`Scan` does not validate.** Tightening a rule or retiring an enum member
+would otherwise make historical rows unloadable — including the ones you'd
+need to load to fix them. Validate at the boundary, trust storage.
 
-**Enum conversions still compile.** `Role("wizard")` is legal Go from
-anywhere; nothing can prevent it. That conversion is your own code, written
-deliberately at a site you can grep for — not untrusted input, the way an
-invalid `Email` string is.
+**Enum conversions still compile.** `Role("wizard")` is legal from anywhere.
+But that's your own code, written deliberately at a site you can grep for —
+not untrusted input the way an invalid `Email` string is.
 
 **Single-field value objects only.** `Money{amount, currency}` needs
 cross-field rules and a multi-argument constructor, which `New<T>(in Base)`
-can't express. Hand-write those with `vow.Collector`, the same way
-`example/invite.go` hand-writes `inviter != invitee`.
+can't express. Hand-write those with `vow.Collector`, as `example/invite.go`
+does for `inviter != invitee`.
 
 ## What Go will not let this library do
 
-These aren't shortcomings to work around later — they're properties of the
-language, with the reason vow does what it does instead.
+Properties of the language, not shortcomings to work around later.
 
 - **Every type has a zero value, and nothing can forbid it.** `var e Email`
-  is legal Go and never passes through a constructor. That's why every
-  generated type has `IsZero` (every enum, `IsValid`), and why a failed
-  `Collect` returns the zero value rather than something safer.
-- **Conversions to a defined type are always legal.** Go has no way to
-  restrict them, so enums trade unforgeability for real `const` members and
-  working exhaustiveness linters.
+  is legal and never passes through a constructor. Hence `IsZero` on every
+  generated type, `IsValid` on every enum, and a failed `Collect` returning
+  the zero value.
+- **Conversions to a defined type are always legal.** Go can't restrict them,
+  so enums trade unforgeability for real `const` members and working
+  exhaustiveness linters.
 - **Unexported means package-scoped, not type-scoped.** Inside `package
-  types`, `Email{v: "garbage"}` compiles. Keep the types package free of code
-  with a motive to bypass a constructor, rather than trying to isolate each
-  type in its own package.
+  types`, `Email{v: "garbage"}` compiles. Keep that package free of code with
+  a motive to bypass a constructor, rather than isolating each type in its
+  own package.
 - **There are no typed struct constants.** A struct-wrapped value object can
-  never be a `const`, which is the whole reason enums use defined string
-  types while value objects use struct wrappers — not a stylistic
-  inconsistency.
+  never be a `const`. This is why enums are defined string types while value
+  objects are struct wrappers — the two need different representations to get
+  `const` members and unforgeability respectively, and only a struct field
+  can carry a tag, which is why enums need a directive instead.
 - **Generics can't produce distinct nominal types.** A single
-  `Validated[T any]` would make `Validated[string]` the same type for an
-  email and a display name. This is the actual answer to "why does this need
-  codegen at all" — Go has no way to derive a new named type from a generic
-  instantiation.
-- **`UnmarshalJSON` has nowhere to report which field failed.** A limit of
-  the interface, not a preference — see Gotchas above.
+  `Validated[T any]` would make `Validated[string]` the same type for an email
+  and a display name. This is why the library generates code instead of
+  shipping one generic type.
 - **Struct tags are backtick literals.** No embedded quotes, nothing
-  type-checked, `,`-splitting corrupts any regex containing one. Rules stay
-  as ordinary Go for exactly this reason.
-- **Doc directives detach on a blank line.** See Gotchas above.
+  type-checked, and `,`-splitting corrupts any regex containing one — which
+  is why rules stay ordinary Go.
 - **Unexported fields are invisible to reflection-based libraries.** The
-  generated `MarshalJSON`/`MarshalText`/`Value`/`Scan` cover the common
-  paths; a library that reaches for struct fields directly will see nothing.
+  generated `MarshalJSON`/`MarshalText`/`Value`/`Scan` cover the common paths;
+  a library reaching for struct fields directly sees nothing.
 
 ## Design notes
 
-**Rules are Go, not tag syntax.** A parser for a validation DSL embedded in a
-struct tag has to be quote-aware to survive a regex containing a comma, and
-it costs you go-to-definition, rename refactoring, and named-constant
-references along the way. Ordinary `vow.Rule[T]` functions keep all of that.
-See [`Rule`](https://pkg.go.dev/github.com/mgiaccone/vow#Rule).
+**Rules are Go, not tag syntax.** A validation DSL in a struct tag needs a
+quote-aware parser to survive a regex containing a comma, and costs you
+go-to-definition, rename refactoring, and named-constant references. Ordinary
+[`Rule[T]`](https://pkg.go.dev/github.com/mgiaccone/vow#Rule) functions keep
+all of that.
 
-**Value objects are struct wrappers; enums are defined types.** Forced by
-"there are no typed struct constants" above — the only way to get real
-`const` members and working exhaustiveness linters is a defined type, and the
-only way to make a wrapped value unforgeable is a struct with an unexported
-field.
-
-**One file per package, not configurable.** Spec vars and enum consts are
-already resolved across the whole package, so per-file output would need the
-generator to delete files it no longer believes it owns — dangerous in a
-tool whose whole pitch is that it's easy to trust. A single always-rewritten
-path makes stale output structurally impossible.
+**One file per package, not configurable.** Spec vars and enum consts already
+resolve across the whole package. Per-file output would mean the generator
+deleting files it believes it owns — dangerous in a tool whose pitch is that
+it's easy to trust. One always-rewritten path makes stale output impossible.
 
 ## Prior art and positioning
 
@@ -398,21 +361,19 @@ boundary left to re-check.
 enum side. `vow` covers value objects, sanitizers, and enums with one tool,
 and rules stay ordinary Go rather than generator-specific syntax.
 
-[`nao1215/vogen`](https://github.com/nao1215/vogen) solves the same value-
-object problem and will come up in every comparison. It declares value
-objects as metadata in a separate `main.go` and generates getters,
-constructors, and `Equal()` from that. `vow` declares them at the type site
-with a struct tag and a `Spec` of ordinary Go rules, and adds sanitizers and
-enums. Neither is a strict superset of the other. `vo` is vogen's default
-generated package name; `vow` is deliberately adjacent but distinct, and no
-relationship between the two projects should be inferred from that.
+[`nao1215/vogen`](https://github.com/nao1215/vogen) solves the same problem
+from the other end: value objects declared as metadata in a separate
+`main.go`, generating getters, constructors, and `Equal()`. `vow` declares
+them at the type site with a struct tag and a `Spec` of ordinary Go rules,
+and adds sanitizers and enums. Neither is a superset of the other; the two
+projects are unrelated.
 
 ## Contributing
 
-Issues and PRs welcome. Before sending one: `go vet ./... && gofmt -l .`,
-`go test ./...`, and if you touched the generator, `go generate ./...`
-followed by `git diff --exit-code` to confirm committed output is current.
-See [`CLAUDE.md`](CLAUDE.md) for the invariants a change needs to respect.
+Issues and PRs welcome. Before sending one: `go vet ./... && gofmt -l .` and
+`go test ./...`; if you touched the generator, also `go generate ./...` then
+`git diff --exit-code`. [`CLAUDE.md`](CLAUDE.md) lists the invariants a change
+needs to respect.
 
 ## License
 
