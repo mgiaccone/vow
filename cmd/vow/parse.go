@@ -18,8 +18,8 @@ import (
 // value objects and enums declared there. It never uses go/types to
 // type-check: types.ExprString is the only use of the go/types package,
 // and it is a pure syntactic printer, not a checker. That is deliberate —
-// see CLAUDE.md — because the generator must work on a package that does
-// not compile.
+// see CONTRIBUTING.md — because the generator must work on a package that
+// does not compile.
 func discoverPackage(dir, outFile, tagKey, vowQualifier string) (*pkg, error) {
 	fset, files, pkgName, err := loadPackage(dir, outFile)
 	if err != nil {

@@ -6,6 +6,7 @@
 # Editor/IDE and local tooling config.
 .idea/
 .mcp.json
+.claude/
 
 # OS cruft.
 .DS_Store

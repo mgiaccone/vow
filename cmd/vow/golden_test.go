@@ -15,7 +15,7 @@ var update = flag.Bool("update", false, "update golden files instead of comparin
 // under internal/testdata/valueobject and compares the result to that
 // directory's committed fixture_vow_generated.go. Run with -update to refresh
 // the golden files after a deliberate generator change; always inspect the
-// diff by eye afterward — see CLAUDE.md.
+// diff by eye afterward — see CONTRIBUTING.md.
 func TestGolden_ValueObject(t *testing.T) {
 	runGoldenCases(t, filepath.Join("..", "..", "internal", "testdata", "valueobject"))
 }
