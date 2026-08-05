@@ -9,11 +9,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v7
         with:
-          go-version: '1.24'
+          go-version-file: go.mod
 
       - name: Vet
         run: go vet ./...
@@ -33,7 +33,7 @@ jobs:
       - name: Generated files are current
         run: |
           go generate ./...
-          git diff --exit-code -- '*_generated_vow.go' || {
+          git diff --exit-code -- '*_vow_generated.go' || {
             echo "generated output is stale; run 'go generate ./...' and commit the result"
             exit 1
           }
