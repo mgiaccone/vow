@@ -61,13 +61,26 @@ type valueObject struct {
 	HasText    bool
 }
 
-// IsString, IsOther, IsBool, IsFloat, and IsIntFamily classify BaseKind for
-// the template, which branches on them to choose String, MarshalText,
-// Value, and Scan bodies without embedding go/types logic in template text.
+// These five predicates classify BaseKind for the template, which branches
+// on them to choose String, MarshalText, Value, and Scan bodies without
+// embedding go/types logic in template text.
+
+// IsString reports whether the base type is string.
 func (v *valueObject) IsString() bool { return v.BaseKind == kindString }
-func (v *valueObject) IsOther() bool  { return v.BaseKind == kindOther }
-func (v *valueObject) IsBool() bool   { return v.BaseKind == kindBool }
-func (v *valueObject) IsFloat() bool  { return v.BaseKind == kindFloat }
+
+// IsOther reports whether the base type is a qualified or other named
+// type, e.g. time.Time, rather than a Go builtin scalar.
+func (v *valueObject) IsOther() bool { return v.BaseKind == kindOther }
+
+// IsBool reports whether the base type is bool.
+func (v *valueObject) IsBool() bool { return v.BaseKind == kindBool }
+
+// IsFloat reports whether the base type is float32 or float64.
+func (v *valueObject) IsFloat() bool { return v.BaseKind == kindFloat }
+
+// IsIntFamily reports whether the base type is one of the integer kinds
+// the template widens to int64 for driver.Value: int, int8, int16, int32,
+// int64, uint8, uint16, or uint32.
 func (v *valueObject) IsIntFamily() bool {
 	return v.BaseKind == kindIntWidenable || v.BaseKind == kindInt64
 }
