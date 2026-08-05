@@ -44,11 +44,12 @@ func NewCreateInvite(inviter, invitee, role string) (CreateInvite, error) {
 		Role:    vow.Collect(&c, FieldRole, role, types.NewRole),
 	}
 
-	// Both fields must have parsed successfully before comparing them:
-	// two failed Collects both return the zero Email, so comparing without
-	// this guard would report a spurious "same as inviter" error on top
-	// of the real per-field failures already recorded.
-	if !cmd.Inviter.IsZero() && !cmd.Invitee.IsZero() && cmd.Inviter == cmd.Invitee {
+	// Both fields must have parsed before comparing them: two failed
+	// Collects both return the zero Email, so an unguarded comparison would
+	// report a spurious "same as inviter" on top of the real failures
+	// already recorded. c.OK asks exactly that question; IsZero would ask a
+	// different one and answer wrongly for a type whose zero value is valid.
+	if c.OK(FieldInviter, FieldInvitee) && cmd.Inviter == cmd.Invitee {
 		c.Add(FieldInvitee, errSameAsInviter)
 	}
 

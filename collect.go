@@ -45,6 +45,30 @@ func (c *Collector) Add(f Field, err error) {
 	c.errs = append(c.errs, FieldError{Field: f, Err: err})
 }
 
+// OK reports whether the named fields are free of recorded failures, so
+// their collected values are safe to use. With no arguments it reports
+// whether nothing at all has failed.
+//
+// This is the correct guard for logic that spans fields — a comparison
+// between two of them, or a branch on one that decides how another is
+// checked. Do not use IsZero for that: a type whose zero value is valid, an
+// int with NonNegative say, reports IsZero() == true after a *successful*
+// parse, so an IsZero guard skips checks that should run. A field never
+// passed to Add or Collect counts as OK, having recorded no failure.
+func (c *Collector) OK(fields ...Field) bool {
+	if len(fields) == 0 {
+		return len(c.errs) == 0
+	}
+	for _, e := range c.errs {
+		for _, f := range fields {
+			if e.Field == f {
+				return false
+			}
+		}
+	}
+	return true
+}
+
 // Err returns errors.Join of every FieldError recorded so far, or nil if
 // none were.
 func (c *Collector) Err() error {
@@ -65,12 +89,13 @@ func (c *Collector) Err() error {
 // libraries alike; it does not depend on Spec.
 //
 // On failure Collect returns the zero value of Out; the caller must consult
-// c.Err() before treating the result as usable. This matters for
-// comparisons in particular: two values returned by failed calls to Collect
-// both equal Out's zero value, so comparing two collected results with == or
-// Equal without first checking c.Err() (or, for a generated type, IsZero)
-// can manufacture a spurious cross-field match between two fields that both
-// failed to parse.
+// c.Err() before treating the result as usable. This matters for comparisons
+// in particular: two values returned by failed calls to Collect both equal
+// Out's zero value, so comparing two collected results without a guard can
+// manufacture a spurious cross-field match between two fields that both
+// failed to parse. Guard with Collector.OK, which asks whether those fields
+// actually parsed — not with IsZero, which asks something different and gives
+// the wrong answer for any type whose zero value is valid.
 func Collect[In, Out any](c *Collector, f Field, in In, parse func(In) (Out, error)) Out {
 	out, err := parse(in)
 	if err != nil {

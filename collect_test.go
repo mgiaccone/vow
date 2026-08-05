@@ -38,6 +38,62 @@ func TestCollector_AddIgnoresNil(t *testing.T) {
 	}
 }
 
+func TestCollectorOK_NoArguments(t *testing.T) {
+	var c vow.Collector
+	if !c.OK() {
+		t.Fatal("an empty Collector must report OK")
+	}
+	c.Add(fieldInviter, vow.ErrBlank)
+	if c.OK() {
+		t.Fatal("OK() must be false once anything has failed")
+	}
+}
+
+func TestCollectorOK_NamedFields(t *testing.T) {
+	var c vow.Collector
+	c.Add(fieldInviter, vow.ErrBlank)
+
+	if c.OK(fieldInviter) {
+		t.Error("OK must be false for a field that failed")
+	}
+	if !c.OK(fieldInvitee) {
+		t.Error("OK must be true for a field that did not fail")
+	}
+	if !c.OK(fieldRole) {
+		t.Error("OK must be true for a field never passed to Add or Collect")
+	}
+	if c.OK(fieldInvitee, fieldInviter) {
+		t.Error("OK must be false when any of the named fields failed")
+	}
+	if !c.OK(fieldInvitee, fieldRole) {
+		t.Error("OK must be true when none of the named fields failed")
+	}
+}
+
+// TestCollectorOK_ZeroValueThatParsed is the reason OK exists. Guarding
+// cross-field logic with IsZero is only sound when a type's zero value can
+// never be valid. Here 0 parses successfully under NonNegative and is also
+// the zero value, so an IsZero guard would skip a check that should run,
+// while OK correctly reports the field as parsed.
+func TestCollectorOK_ZeroValueThatParsed(t *testing.T) {
+	spec := vow.Spec[int]{Rules: []vow.Rule[int]{vow.NonNegative[int]}}
+
+	var c vow.Collector
+	got := vow.Collect(&c, fieldRole, 0, spec.Parse)
+
+	if got != 0 {
+		t.Fatalf("expected 0 to parse successfully, got %d", got)
+	}
+	if !c.OK(fieldRole) {
+		t.Fatal("a successful parse returning the zero value must report OK")
+	}
+	// The distinction the guard turns on: the value *is* the zero value,
+	// which is exactly why IsZero is the wrong question to ask.
+	if got != *new(int) {
+		t.Fatal("expected the parsed value to equal the zero value")
+	}
+}
+
 func TestCollect_ZeroValueOnFailure(t *testing.T) {
 	var c vow.Collector
 	got := vow.Collect(&c, fieldInviter, "   ", parseNonBlank)

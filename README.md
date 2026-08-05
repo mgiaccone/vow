@@ -280,12 +280,15 @@ return cmd, c.Err()
 ```
 
 `Collect` runs a constructor and records any failure against a `Field`,
-returning the zero value on failure — check `c.Err()` (or `IsZero`) before
-trusting the result. `vow.FieldErrors(err)` walks the joined error and returns
-every `FieldError` in it; use it instead of `errors.As`, which stops at the
-first match and silently drops the rest. `example/invite.go` has the full
-constructor, including the rule a per-type generator can't express: the
-invitee must not be the inviter.
+returning the zero value on failure — check `c.Err()` before trusting the
+result. For logic that spans fields, guard with `c.OK(FieldA, FieldB)`, which
+reports whether those fields parsed. Don't guard with `IsZero`: for a type
+whose zero value is valid it is true after a *successful* parse, so the guard
+skips checks that should run. `vow.FieldErrors(err)` walks the joined error
+and returns every `FieldError` in it; use it instead of `errors.As`, which
+stops at the first match and silently drops the rest. `example/invite.go` has
+the full constructor, including the rule a per-type generator can't express:
+the invitee must not be the inviter.
 
 Mapping a `vow.Field` to a wire name belongs in your transport adapter, the
 only layer that knows the wire format. Illustration, not part of vow's API:
