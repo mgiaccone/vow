@@ -1,0 +1,39 @@
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+# Least privilege by default; the release job widens it for itself.
+permissions:
+  contents: read
+
+jobs:
+  # Reuses CI rather than restating it, so a release can never pass checks
+  # that main wouldn't.
+  verify:
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    needs: verify
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0 # release notes are generated from history
+
+      - name: Create release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          # Via env, not inline interpolation, so the tag name is data.
+          TAG: ${{ github.ref_name }}
+        run: |
+          # A hyphen makes it a semver prerelease (v1.0.0-rc1); plain 0.x is
+          # not one, it is just an unstable API, which the notes state.
+          if [ "${TAG#*-}" != "$TAG" ]; then
+            gh release create "$TAG" --verify-tag --generate-notes --prerelease
+          else
+            gh release create "$TAG" --verify-tag --generate-notes
+          fi
