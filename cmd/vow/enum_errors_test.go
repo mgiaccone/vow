@@ -112,7 +112,7 @@ const (
 			if err := os.WriteFile(filepath.Join(dir, "types.go"), []byte(c.src), 0o644); err != nil {
 				t.Fatal(err)
 			}
-			_, err := discoverPackage(dir, "zz_generated_vow.go", "vow", "vow")
+			_, err := discoverPackage(dir, "fixture_vow_generated.go", "vow", "vow")
 			if err == nil {
 				t.Fatal("expected an error, got nil")
 			}
@@ -143,7 +143,7 @@ const (
 	if err := os.WriteFile(filepath.Join(dir, "types.go"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	_, err := discoverPackage(dir, "zz_generated_vow.go", "vow", "vow")
+	_, err := discoverPackage(dir, "fixture_vow_generated.go", "vow", "vow")
 	if err == nil {
 		t.Fatal("expected an error, got nil")
 	}
@@ -172,7 +172,7 @@ const (
 	if err := os.WriteFile(filepath.Join(dir, "types.go"), []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	p, err := discoverPackage(dir, "zz_generated_vow.go", "vow", "vow")
+	p, err := discoverPackage(dir, "fixture_vow_generated.go", "vow", "vow")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

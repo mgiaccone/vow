@@ -13,7 +13,7 @@ var update = flag.Bool("update", false, "update golden files instead of comparin
 
 // TestGolden_ValueObject runs the generator against every case directory
 // under internal/testdata/valueobject and compares the result to that
-// directory's committed zz_generated_vow.go. Run with -update to refresh
+// directory's committed fixture_vow_generated.go. Run with -update to refresh
 // the golden files after a deliberate generator change; always inspect the
 // diff by eye afterward — see CLAUDE.md.
 func TestGolden_ValueObject(t *testing.T) {
@@ -48,7 +48,7 @@ func runGoldenCases(t *testing.T, root string) {
 			dir := filepath.Join(root, name)
 			got := generateForTest(t, dir)
 
-			goldenPath := filepath.Join(dir, "zz_generated_vow.go")
+			goldenPath := filepath.Join(dir, "fixture_vow_generated.go")
 			if *update {
 				if err := os.WriteFile(goldenPath, got, 0o644); err != nil {
 					t.Fatalf("writing golden file: %v", err)
@@ -70,7 +70,7 @@ func runGoldenCases(t *testing.T, root string) {
 
 func generateForTest(t *testing.T, dir string) []byte {
 	t.Helper()
-	p, err := discoverPackage(dir, "zz_generated_vow.go", "vow", "vow")
+	p, err := discoverPackage(dir, "fixture_vow_generated.go", "vow", "vow")
 	if err != nil {
 		t.Fatalf("discoverPackage(%s): %v", dir, err)
 	}
@@ -125,7 +125,7 @@ func UseEmail() {
 		t.Fatal(err)
 	}
 
-	p, err := discoverPackage(dir, "zz_generated_vow.go", "vow", "vow")
+	p, err := discoverPackage(dir, "fixture_vow_generated.go", "vow", "vow")
 	if err != nil {
 		t.Fatalf("discovery must succeed on a non-compiling package, got: %v", err)
 	}

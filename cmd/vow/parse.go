@@ -168,6 +168,45 @@ func loadPackage(dir, outFile string) (*token.FileSet, []*ast.File, string, erro
 	return fset, files, pkgName, nil
 }
 
+// derivePackageOutName peeks at the package clause of the first (sorted)
+// non-test .go file in dir and returns "<package>_vow_generated.go" — the
+// default -out name when the flag isn't set explicitly. It doesn't need to
+// exclude any previous output file first: if one exists, its package
+// clause already matches the real package name, so including it in this
+// peek is harmless. parser.PackageClauseOnly stops right after the package
+// clause, so this is cheap even though it's a throwaway parse distinct from
+// loadPackage's real one.
+func derivePackageOutName(dir string) (string, error) {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return "", fmt.Errorf("reading %s: %w", dir, err)
+	}
+
+	var names []string
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		name := e.Name()
+		if !strings.HasSuffix(name, ".go") || strings.HasSuffix(name, "_test.go") {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	if len(names) == 0 {
+		return "", fmt.Errorf("no Go source files found in %s", dir)
+	}
+
+	path := filepath.Join(dir, names[0])
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, nil, parser.PackageClauseOnly)
+	if err != nil {
+		return "", fmt.Errorf("parsing %s: %w", path, err)
+	}
+	return f.Name.Name + "_vow_generated.go", nil
+}
+
 func collectPackageVars(files []*ast.File) map[string]bool {
 	vars := map[string]bool{}
 	for _, f := range files {

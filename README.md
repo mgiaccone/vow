@@ -227,7 +227,7 @@ block, so there is no user-authored `Spec` to name.
 | Flag | Default | Meaning |
 |---|---|---|
 | `-dir` | `.` | Directory to scan. |
-| `-out` | `zz_generated_vow.go` | Output file name, written inside `-dir`. |
+| `-out` | `<package>_vow_generated.go` | Output file name, written inside `-dir`. The default is derived from the package's own name. |
 | `-vow-qualifier` | `vow` | Local qualifier for the runtime import in generated code. |
 | `-tag-key` | `vow` | Struct tag key that marks a value object field. |
 | `-v` | off | Print a one-line summary on success. |

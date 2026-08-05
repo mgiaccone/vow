@@ -18,7 +18,7 @@ func main() {
 func run(args []string) int {
 	fs := flag.NewFlagSet("vow", flag.ContinueOnError)
 	dir := fs.String("dir", ".", "directory to scan for vow-tagged types and //vow:enum directives")
-	out := fs.String("out", "zz_generated_vow.go", "output file name, written inside -dir")
+	out := fs.String("out", "", "output file name, written inside -dir (default: <package>_vow_generated.go)")
 	vowQualifier := fs.String("vow-qualifier", "vow", "local qualifier for the vow runtime import in generated code")
 	tagKey := fs.String("tag-key", "vow", "struct tag key that marks a value object field")
 	verbose := fs.Bool("v", false, "print a one-line summary on success")
@@ -26,7 +26,17 @@ func run(args []string) int {
 		return 1 // flag has already printed its own usage/error to stderr
 	}
 
-	if err := generate(*dir, *out, *tagKey, *vowQualifier, *verbose); err != nil {
+	resolvedOut := *out
+	if resolvedOut == "" {
+		derived, err := derivePackageOutName(*dir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "vow: %s\n", err)
+			return 1
+		}
+		resolvedOut = derived
+	}
+
+	if err := generate(*dir, resolvedOut, *tagKey, *vowQualifier, *verbose); err != nil {
 		fmt.Fprintf(os.Stderr, "vow: %s\n", err)
 		return 1
 	}
