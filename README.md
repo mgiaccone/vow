@@ -32,9 +32,8 @@ It is not a struct validator: `vow` never reads your request structs or their
 - [Gotchas](#gotchas)
 - [What Go will not let this library do](#what-go-will-not-let-this-library-do)
 - [Design notes](#design-notes)
-- [Prior art and positioning](#prior-art-and-positioning)
+- [Alternatives](#alternatives)
 - [Contributing](#contributing)
-- [License](#license)
 
 ## Install
 
@@ -350,31 +349,18 @@ resolve across the whole package. Per-file output would mean the generator
 deleting files it believes it owns — dangerous in a tool whose pitch is that
 it's easy to trust. One always-rewritten path makes stale output impossible.
 
-## Prior art and positioning
+## Alternatives
 
-[`go-playground/validator`](https://github.com/go-playground/validator) and
-[`ozzo-validation`](https://github.com/go-ozzo/ozzo-validation) validate
-*structs at a boundary*. `vow` makes *values* unforgeable so there's no
-boundary left to re-check.
-
-[`go-enum`](https://github.com/abice/go-enum) is the closest neighbor on the
-enum side. `vow` covers value objects, sanitizers, and enums with one tool,
-and rules stay ordinary Go rather than generator-specific syntax.
-
-[`nao1215/vogen`](https://github.com/nao1215/vogen) solves the same problem
-from the other end: value objects declared as metadata in a separate
-`main.go`, generating getters, constructors, and `Equal()`. `vow` declares
-them at the type site with a struct tag and a `Spec` of ordinary Go rules,
-and adds sanitizers and enums. Neither is a superset of the other; the two
-projects are unrelated.
+- [`go-playground/validator`](https://github.com/go-playground/validator),
+  [`ozzo-validation`](https://github.com/go-ozzo/ozzo-validation) — validate
+  structs at a boundary. `vow` makes values unforgeable so there's no boundary
+  left to re-check.
+- [`go-enum`](https://github.com/abice/go-enum) — enums only, with rules in
+  generator-specific syntax rather than ordinary Go.
+- [`nao1215/vogen`](https://github.com/nao1215/vogen) — same problem from the
+  other end: value objects declared as metadata in a separate `main.go`,
+  rather than at the type site. Unrelated project.
 
 ## Contributing
 
-Issues and PRs welcome. Before sending one: `go vet ./... && gofmt -l .` and
-`go test ./...`; if you touched the generator, also `go generate ./...` then
-`git diff --exit-code`. [`CLAUDE.md`](CLAUDE.md) lists the invariants a change
-needs to respect.
-
-## License
-
-[MIT](LICENSE)
+See [CONTRIBUTING.md](CONTRIBUTING.md).
