@@ -1,0 +1,11 @@
+# Build artifacts. A single-package `go build ./cmd/vow/...` (or similar)
+# writes a binary named after the package to the current directory; it
+# should never be committed.
+/vow
+
+# Editor/IDE and local tooling config.
+.idea/
+.mcp.json
+
+# OS cruft.
+.DS_Store
