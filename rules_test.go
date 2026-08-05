@@ -4,6 +4,7 @@ import (
 	"errors"
 	"regexp"
 	"testing"
+	"time"
 
 	"github.com/mgiaccone/vow"
 )
@@ -21,6 +22,44 @@ func TestNotBlank(t *testing.T) {
 	}
 	if err.Error() != "is required" {
 		t.Fatalf("got message %q, want %q", err.Error(), "is required")
+	}
+}
+
+func TestNotZero(t *testing.T) {
+	if err := vow.NotZero("hello"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	err := vow.NotZero("")
+	if err == nil {
+		t.Fatal("expected error for the zero value")
+	}
+	if !errors.Is(err, vow.ErrBlank) {
+		t.Fatalf("expected ErrBlank, got %v", err)
+	}
+	if err.Error() != "is required" {
+		t.Fatalf("got message %q, want %q", err.Error(), "is required")
+	}
+}
+
+func TestNotZero_Int(t *testing.T) {
+	if err := vow.NotZero(1); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if err := vow.NotZero(0); !errors.Is(err, vow.ErrBlank) {
+		t.Fatalf("expected ErrBlank for 0, got %v", err)
+	}
+}
+
+// TestNotZero_TimeTime is the reason NotZero exists: time.Time has no <
+// operator, so it doesn't satisfy cmp.Ordered and Positive can't reject
+// it. NotZero only needs comparable, which time.Time does satisfy.
+func TestNotZero_TimeTime(t *testing.T) {
+	if err := vow.NotZero(time.Now()); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var zero time.Time
+	if err := vow.NotZero(zero); !errors.Is(err, vow.ErrBlank) {
+		t.Fatalf("expected ErrBlank for the zero time.Time, got %v", err)
 	}
 }
 
@@ -145,5 +184,29 @@ func TestPositive(t *testing.T) {
 		if err.Error() != "must be greater than zero" {
 			t.Fatalf("got message %q", err.Error())
 		}
+	}
+}
+
+// TestNonNegative_AcceptsZero is the difference from Positive: a Balance
+// that has hit exactly zero must still parse.
+func TestNonNegative_AcceptsZero(t *testing.T) {
+	for _, v := range []int{0, 1} {
+		if err := vow.NonNegative(v); err != nil {
+			t.Fatalf("unexpected error for %d: %v", v, err)
+		}
+	}
+}
+
+func TestNonNegative_RejectsNegative(t *testing.T) {
+	err := vow.NonNegative(-1)
+	if err == nil {
+		t.Fatal("expected error for -1")
+	}
+	if !errors.Is(err, vow.ErrOutOfRange) {
+		t.Fatalf("expected ErrOutOfRange, got %v", err)
+	}
+	want := "must not be negative"
+	if err.Error() != want {
+		t.Fatalf("got message %q, want %q", err.Error(), want)
 	}
 }

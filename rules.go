@@ -45,6 +45,17 @@ func NotBlank(s string) error {
 	return nil
 }
 
+// NotZero rejects the zero value of T. It generalizes NotBlank to any
+// comparable type — useful for a time.Time or a UUID, where cmp.Ordered
+// (and so Positive) doesn't apply.
+func NotZero[T comparable](v T) error {
+	var zero T
+	if v == zero {
+		return ErrBlank
+	}
+	return nil
+}
+
 // MaxLen rejects a string longer than n runes.
 func MaxLen(n int) Rule[string] {
 	return func(s string) error {
@@ -103,6 +114,16 @@ func Positive[T cmp.Ordered](v T) error {
 	var zero T
 	if v <= zero {
 		return ruleError{"must be greater than zero", ErrOutOfRange}
+	}
+	return nil
+}
+
+// NonNegative rejects a value less than zero. Unlike Positive, zero itself
+// is accepted.
+func NonNegative[T cmp.Ordered](v T) error {
+	var zero T
+	if v < zero {
+		return ruleError{"must not be negative", ErrOutOfRange}
 	}
 	return nil
 }

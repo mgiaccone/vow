@@ -215,12 +215,14 @@ block, so there is no user-authored `Spec` to name.
 | Function | Sentinel | Message |
 |---|---|---|
 | `NotBlank` | `ErrBlank` | is required |
+| `NotZero` | `ErrBlank` | is required |
 | `MaxLen(n)` | `ErrTooLong` | must be at most `n` characters |
 | `MinLen(n)` | `ErrTooShort` | must be at least `n` characters |
 | `Matches(re, msg)` | `ErrNotMatch` | `msg` |
 | `OneOf(...)` | `ErrNotInSet` | must be one of: ... |
 | `InRange(lo, hi)` | `ErrOutOfRange` | must be between `lo` and `hi` |
 | `Positive` | `ErrOutOfRange` | must be greater than zero |
+| `NonNegative` | `ErrOutOfRange` | must not be negative |
 
 **CLI flags** (`cmd/vow`):
 
