@@ -159,12 +159,13 @@ func (x *T) Scan(src any) error              // if sql
 ```
 
 `sql` emits the two `database/sql` interfaces and nothing else — no pgx,
-sqlx, ent, or GORM variants, and none are needed. pgx's `pgtype` falls back
-to `driver.Valuer` and `sql.Scanner` for types it doesn't recognize, so
-`sql`-generated types work with native pgx as they are.
-`example/types/types_test.go` asserts the interfaces are satisfied; it does
-not import pgx, since that would put a third-party dependency in this
-module.
+sqlx, ent, or GORM variants, and none are needed. pgx's `pgtype` resolves its
+encode and scan plans through `driver.Valuer` and `sql.Scanner` for types it
+doesn't recognize, so `sql`-generated types work with native pgx unmodified,
+including `NULL` scanning to the zero value and retired enum members still
+loading. Verified against pgx v5.10.0; `example/types/types_test.go` locks in
+the part `vow` controls — that the interfaces are satisfied — without
+importing pgx, which would put a third-party dependency in this module.
 
 The membership rule behind `IsValid` and `New<T>` is generated from the enum's
 own `const` block, so the accepted set can never drift from the declared
