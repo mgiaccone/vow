@@ -44,7 +44,7 @@ or a `json` tag, only the individual values that go into one.
 constraint. The recommended path is a pinned tool dependency:
 
 ```
-go get -tool github.com/mgiaccone/vow/cmd/vow@v1.0.0
+go get -tool github.com/mgiaccone/vow/cmd/vow@latest
 ```
 
 That adds a `tool` directive to your `go.mod`, separate from `require`. Then
@@ -65,16 +65,22 @@ also uses. `vow` has zero dependencies of its own, so adding it can never
 perturb anything else. That's the whole reason the zero-dependency
 constraint exists — feel it here.
 
-If you'd rather not add a tool dependency, running it directly still works:
+If you'd rather not add a tool dependency, running it directly still works —
+but pin an explicit version, unlike the `go get -tool` command above:
 
 ```go
-//go:generate go run github.com/mgiaccone/vow/cmd/vow@v1.0.0 -dir=.
+//go:generate go run github.com/mgiaccone/vow/cmd/vow@vX.Y.Z -dir=.
 ```
 
-This needs a `require` entry (`go mod tidy` adds one). Avoid `@latest` in a
-generate directive — generated code that changes because upstream released
-while you were at lunch isn't reproducible, and it breaks the `git diff
---exit-code` CI check below. Prefer `go tool` when you can.
+Replace `vX.Y.Z` with the version you're actually depending on (`go list -m
+github.com/mgiaccone/vow` shows it once you have one). This needs a
+`require` entry too (`go mod tidy` adds one). The asymmetry with `@latest`
+above is deliberate: `go get -tool ...@latest` resolves once and pins the
+result into `go.mod`, so it's reproducible from then on, but `go run
+...@latest` inside a generate directive re-resolves on *every* invocation —
+generated code that changes because upstream released while you were at
+lunch isn't reproducible, and it breaks the `git diff --exit-code` CI check
+below. Prefer `go tool` when you can.
 
 This repository dogfoods the `tool` path for its own `example/` package —
 see this module's own `go.mod`.
