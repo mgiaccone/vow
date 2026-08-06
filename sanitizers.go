@@ -17,8 +17,8 @@ func Upper(s string) string {
 	return strings.ToUpper(s)
 }
 
-// Collapse replaces every run of whitespace, including leading and trailing
-// runs, with a single space.
+// Collapse reduces every interior run of whitespace to a single space and
+// removes leading and trailing whitespace entirely, so it subsumes Trim.
 func Collapse(s string) string {
 	return strings.Join(strings.Fields(s), " ")
 }

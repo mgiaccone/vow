@@ -394,12 +394,12 @@ block, so there is no user-authored `Spec` to name.
 Named in `sanitize=`, and a closed set: a sanitizer cannot fail, which is
 what makes it safe to name in a struct tag.
 
-| Tag name | Function |
-|---|---|
-| `trim` | `vow.Trim` |
-| `lower` | `vow.Lower` |
-| `upper` | `vow.Upper` |
-| `collapse` | `vow.Collapse` |
+| Tag name | Function | Effect |
+|---|---|---|
+| `trim` | `vow.Trim` | Removes leading and trailing whitespace. |
+| `lower` | `vow.Lower` | Lowercases. |
+| `upper` | `vow.Upper` | Uppercases. |
+| `collapse` | `vow.Collapse` | Reduces interior whitespace runs to one space and removes leading and trailing whitespace, so it subsumes `trim`. |
 
 `vow.Chain(ss...)` composes several sanitizers into one, and
 `Spec.Sanitizing(ss...)` returns a copy of a `Spec` with that chain attached.
@@ -414,13 +414,13 @@ Anything not here is an ordinary `vow.Rule[T]` you write yourself, as
 |---|---|---|
 | `NotBlank` | `ErrBlank` | is required — strings, empty once whitespace is trimmed |
 | `NotZero` | `ErrBlank` | is required — any comparable, e.g. a `time.Time` or UUID |
-| `MaxLen(n)` | `ErrTooLong` | must be at most `n` characters |
-| `MinLen(n)` | `ErrTooShort` | must be at least `n` characters |
+| `MaxLen(n)` | `ErrTooLong` | must be at most `n` characters — counts runes, not bytes; `n` itself passes |
+| `MinLen(n)` | `ErrTooShort` | must be at least `n` characters — counts runes, not bytes; `n` itself passes |
 | `Matches(re, msg)` | `ErrNotMatch` | `msg` |
 | `OneOf(...)` | `ErrNotInSet` | must be one of: ... |
-| `InRange(lo, hi)` | `ErrOutOfRange` | must be between `lo` and `hi` |
-| `Positive` | `ErrOutOfRange` | must be greater than zero |
-| `NonNegative` | `ErrOutOfRange` | must not be negative |
+| `InRange(lo, hi)` | `ErrOutOfRange` | must be between `lo` and `hi` — inclusive at both ends |
+| `Positive` | `ErrOutOfRange` | must be greater than zero — rejects zero |
+| `NonNegative` | `ErrOutOfRange` | must not be negative — accepts zero |
 
 ### Reserved identifiers
 
