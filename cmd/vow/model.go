@@ -1,6 +1,9 @@
 package main
 
-import "go/token"
+import (
+	"go/token"
+	"strings"
+)
 
 // baseKind classifies a value object's base type for the purpose of
 // generating String, MarshalText, Value, and Scan. It is derived purely
@@ -46,6 +49,14 @@ func classifyBase(expr string) baseKind {
 	return kindOther
 }
 
+// specParam is one parameter of a func spec, carried through to the
+// generated constructors. Name is always non-empty: unnamed parameters are
+// given positional names during discovery, since a signature needs them.
+type specParam struct {
+	Name string // "t"
+	Type string // "PhoneNumberType", "...Country", "time.Time"
+}
+
 // valueObject is the resolved, generator-ready description of one
 // vow-tagged struct.
 type valueObject struct {
@@ -53,12 +64,56 @@ type valueObject struct {
 	Pos        token.Position
 	BaseType   string // syntactic expression, e.g. "string", "int32", "time.Time"
 	BaseKind   baseKind
-	FieldName  string   // the struct's single unexported field, e.g. "v"
-	SpecVar    string   // "emailSpec", derived or from spec=
-	Sanitizers []string // exported vow sanitizer names in tag order, e.g. ["Trim", "Lower"]
+	FieldName  string      // the struct's single unexported field, e.g. "v"
+	SpecVar    string      // "emailSpec", derived or from spec=
+	SpecParams []specParam // empty when the spec is a var, non-empty when it is a func
+	Sanitizers []string    // exported vow sanitizer names in tag order, e.g. ["Trim", "Lower"]
 	HasJSON    bool
 	HasSQL     bool
 	HasText    bool
+}
+
+// SpecIsFunc reports whether this type's spec takes parameters, which is
+// what distinguishes `emailSpec.Parse(in)` from `numberSpec(t).Parse(in)`.
+func (v *valueObject) SpecIsFunc() bool { return len(v.SpecParams) > 0 }
+
+// ParamSignature renders the spec parameters for a constructor signature,
+// leading with a comma because the value argument always comes first:
+// ", t PhoneNumberType". Empty for a var spec.
+func (v *valueObject) ParamSignature() string {
+	if len(v.SpecParams) == 0 {
+		return ""
+	}
+	parts := make([]string, len(v.SpecParams))
+	for i, p := range v.SpecParams {
+		parts[i] = p.Name + " " + p.Type
+	}
+	return ", " + strings.Join(parts, ", ")
+}
+
+// ParamNames renders the spec parameters as call arguments: "t". A variadic
+// parameter is forwarded with "...", so numberSpec(t...) preserves the
+// caller's argument list.
+func (v *valueObject) ParamNames() string {
+	parts := make([]string, len(v.SpecParams))
+	for i, p := range v.SpecParams {
+		parts[i] = p.Name
+		if strings.HasPrefix(p.Type, "...") {
+			parts[i] += "..."
+		}
+	}
+	return strings.Join(parts, ", ")
+}
+
+// SanitizerVar is the package-level var holding the composed sanitizer chain
+// for a func-spec type. A var spec hoists a whole parser instead (ParserVar);
+// a func spec cannot, because its Spec depends on a runtime argument, so only
+// the chain is hoisted and the Spec is composed per call.
+func (v *valueObject) SanitizerVar() string {
+	if len(v.Sanitizers) == 0 || !v.SpecIsFunc() {
+		return ""
+	}
+	return lowerLeadingRun(v.Name) + "Sanitizer"
 }
 
 // These five predicates classify BaseKind for the template, which branches
@@ -86,10 +141,12 @@ func (v *valueObject) IsIntFamily() bool {
 }
 
 // ParserVar is the name of the package-level composed parser emitted when
-// Sanitizers is non-empty: SpecVar.Sanitizing(...). Empty when there are no
-// sanitizers, in which case generated code calls SpecVar.Parse directly.
+// Sanitizers is non-empty on a var spec: SpecVar.Sanitizing(...). Empty when
+// there are no sanitizers, in which case generated code calls SpecVar.Parse
+// directly, and empty for a func spec, which hoists only its sanitizer chain
+// (SanitizerVar) because the Spec itself depends on a runtime argument.
 func (v *valueObject) ParserVar() string {
-	if len(v.Sanitizers) == 0 {
+	if len(v.Sanitizers) == 0 || v.SpecIsFunc() {
 		return ""
 	}
 	return lowerLeadingRun(v.Name) + "Parser"

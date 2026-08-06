@@ -94,6 +94,61 @@ func TestCollectorOK_ZeroValueThatParsed(t *testing.T) {
 	}
 }
 
+func TestCollectFunc_Success(t *testing.T) {
+	var c vow.Collector
+	got := vow.CollectFunc(&c, fieldInviter, func() (string, error) {
+		return "a@example.com", nil
+	})
+	if got != "a@example.com" {
+		t.Fatalf("got %q", got)
+	}
+	if err := c.Err(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !c.OK(fieldInviter) {
+		t.Fatal("expected the field to report OK")
+	}
+}
+
+func TestCollectFunc_Failure(t *testing.T) {
+	var c vow.Collector
+	got := vow.CollectFunc(&c, fieldInviter, func() (string, error) {
+		return "ignored", vow.ErrBlank
+	})
+	if got != "" {
+		t.Fatalf("expected the zero value on failure, got %q", got)
+	}
+	if c.OK(fieldInviter) {
+		t.Fatal("expected the field to report not OK")
+	}
+	if !errors.Is(c.Err(), vow.ErrBlank) {
+		t.Fatalf("expected ErrBlank through the collector, got %v", c.Err())
+	}
+}
+
+// TestCollectFunc_ClosesOverSeveralArguments is the case CollectFunc exists
+// for: a constructor taking more than the value cannot satisfy Collect's
+// func(In) (Out, error), but a thunk closing over the extras can.
+func TestCollectFunc_ClosesOverSeveralArguments(t *testing.T) {
+	newSuffixed := func(prefix, sep, in string) (string, error) {
+		if in == "" {
+			return "", vow.ErrBlank
+		}
+		return prefix + sep + in, nil
+	}
+
+	var c vow.Collector
+	got := vow.CollectFunc(&c, fieldRole, func() (string, error) {
+		return newSuffixed("role", ":", "admin")
+	})
+	if got != "role:admin" {
+		t.Fatalf("got %q", got)
+	}
+	if err := c.Err(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
 func TestCollect_ZeroValueOnFailure(t *testing.T) {
 	var c vow.Collector
 	got := vow.Collect(&c, fieldInviter, "   ", parseNonBlank)

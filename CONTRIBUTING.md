@@ -77,6 +77,12 @@ don't know it. Read the reason before working around the rule.
 - **No validation rules in struct tags.** Tags are backtick literals: no
   embedded quotes, and splitting on `,` corrupts any regex containing one.
   Rules stay ordinary, type-checked Go.
+- **`Rule[T]` stays `func(T) error`, and a type resolves exactly one spec.**
+  A rule that could see sibling fields would make the value object know about
+  its container, and it would stop being reusable anywhere else. Validation
+  that depends on another value is expressed by the spec being a *func* whose
+  parameters reach the constructor — one spec, taking arguments — not by
+  widening either of these.
 - **No `UnmarshalJSON` on generated types.** A decode error carries no field
   identity, so it can't join a `Collector` result.
 - **No validation in `Scan`.** Retiring an enum member or tightening a rule

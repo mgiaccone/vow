@@ -106,6 +106,32 @@ func Collect[In, Out any](c *Collector, f Field, in In, parse func(In) (Out, err
 	return out
 }
 
+// CollectFunc runs parse and records any failure against f on c, returning
+// parse's result. Unlike Collect, parse takes no argument: it closes over
+// whatever it needs, which is what makes it fit a constructor taking more
+// than the value alone — one whose spec is a func, for instance.
+//
+//	cmd.Number = vow.CollectFunc(&c, FieldNumber, func() (types.TypedNumber, error) {
+//		return types.NewTypedNumber(raw, cmd.Type)
+//	})
+//
+// Prefer this to calling the constructor yourself and passing the error to
+// Add: a bare c.Add(f, err) reads as a statement that silently does nothing
+// when err is nil, which is the shape Go's explicit error handling exists to
+// avoid.
+//
+// On failure CollectFunc returns the zero value of Out, exactly as Collect
+// does; guard with Collector.OK before using the result.
+func CollectFunc[Out any](c *Collector, f Field, parse func() (Out, error)) Out {
+	out, err := parse()
+	if err != nil {
+		c.Add(f, err)
+		var zero Out
+		return zero
+	}
+	return out
+}
+
 // FieldErrors walks err — including trees built by errors.Join, and errors
 // wrapped with fmt.Errorf's %w — and returns every FieldError found in it,
 // in the order they were discovered. An empty result means err carries no

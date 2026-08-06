@@ -55,7 +55,7 @@ func discoverPackage(dir, outFile, tagKey, vowQualifier string) (*pkg, error) {
 				}
 
 				if st, ok := ts.Type.(*ast.StructType); ok {
-					vo, err := resolveValueObject(fset, table, ts, st, tagKey, decls.vars, imports)
+					vo, err := resolveValueObject(fset, table, ts, st, tagKey, decls, imports)
 					if err != nil {
 						return nil, err
 					}
@@ -212,17 +212,23 @@ func derivePackageOutName(dir string) (string, error) {
 	return f.Name.Name + "_vow_generated.go", nil
 }
 
-// packageDecls indexes the hand-written package's declarations two ways:
-// vars resolves a spec= or derived spec variable name, and all holds every
-// package-level identifier — var, const, type, and func share one namespace
-// in Go — so generation can tell when it is about to redeclare one.
+// packageDecls indexes the hand-written package's declarations three ways:
+// vars and funcs each resolve a spec= or derived spec name — a spec may be
+// either — and all holds every package-level identifier, since var, const,
+// type, and func share one namespace in Go, so generation can tell when it
+// is about to redeclare one.
 type packageDecls struct {
-	vars map[string]bool
-	all  map[string]token.Position
+	vars  map[string]bool
+	funcs map[string]*ast.FuncDecl
+	all   map[string]token.Position
 }
 
 func collectPackageDecls(fset *token.FileSet, files []*ast.File) packageDecls {
-	decls := packageDecls{vars: map[string]bool{}, all: map[string]token.Position{}}
+	decls := packageDecls{
+		vars:  map[string]bool{},
+		funcs: map[string]*ast.FuncDecl{},
+		all:   map[string]token.Position{},
+	}
 	record := func(ident *ast.Ident) {
 		if ident.Name == "_" {
 			return
@@ -238,6 +244,9 @@ func collectPackageDecls(fset *token.FileSet, files []*ast.File) packageDecls {
 			case *ast.FuncDecl:
 				if d.Recv != nil {
 					continue // a method lives in its receiver's namespace, not the package's
+				}
+				if _, seen := decls.funcs[d.Name.Name]; !seen {
+					decls.funcs[d.Name.Name] = d
 				}
 				record(d.Name)
 			case *ast.GenDecl:
@@ -285,6 +294,12 @@ func checkNameCollisions(decls packageDecls, valueObjects []*valueObject, enums 
 		if parser := vo.ParserVar(); parser != "" {
 			if err := claim(vo.Pos, vo.Name, parser,
 				"rename the existing declaration, or drop sanitize= from the tag to stop generating a parser"); err != nil {
+				return err
+			}
+		}
+		if sanitizer := vo.SanitizerVar(); sanitizer != "" {
+			if err := claim(vo.Pos, vo.Name, sanitizer,
+				"rename the existing declaration, or drop sanitize= from the tag to stop generating a sanitizer"); err != nil {
 				return err
 			}
 		}
@@ -337,7 +352,7 @@ func defaultLocalName(path string) string {
 // resolveValueObject inspects a StructType TypeSpec and returns a
 // *valueObject if exactly one field carries tagKey, nil if none do (this
 // struct simply isn't a vow type), or an error for anything in between.
-func resolveValueObject(fset *token.FileSet, table map[string]string, ts *ast.TypeSpec, st *ast.StructType, tagKey string, packageVars map[string]bool, imports *importCollector) (*valueObject, error) {
+func resolveValueObject(fset *token.FileSet, table map[string]string, ts *ast.TypeSpec, st *ast.StructType, tagKey string, decls packageDecls, imports *importCollector) (*valueObject, error) {
 	typeName := ts.Name.Name
 	pos := fset.Position(ts.Pos())
 
@@ -400,11 +415,30 @@ func resolveValueObject(fset *token.FileSet, table map[string]string, ts *ast.Ty
 	if derived {
 		specVar = specVarName(typeName)
 	}
-	if !packageVars[specVar] {
-		if derived {
-			return nil, errAt(pos, typeName, "no var named %s found; declare var %s = vow.Spec[%s]{...} in the package, or set spec=NAME in the tag to use a different name", specVar, specVar, baseExpr)
+
+	// A spec may be a package-level var (no parameters) or a func returning
+	// one, whose parameters are appended to the generated constructors after
+	// the value. The func's return type is not checked — that would need
+	// go/types — so a mismatch surfaces as a compile error in the generated
+	// file, exactly as a mismatched Spec[int]/string base already does.
+	var specParams []specParam
+	specFn, isFunc := decls.funcs[specVar]
+	switch {
+	case decls.vars[specVar]:
+		// nothing to do: today's path
+	case isFunc:
+		specParams, err = specFuncParams(fset, table, specFn, pos, typeName, imports)
+		if err != nil {
+			return nil, err
 		}
-		return nil, errAt(pos, typeName, "spec=%s names a var that does not exist in this package", specVar)
+	default:
+		if _, exists := decls.all[specVar]; exists {
+			return nil, errAt(pos, typeName, "%s is declared in this package but is neither a var nor a func; a spec must be var %s = vow.Spec[%s]{...} or func %s(...) vow.Spec[%s]", specVar, specVar, baseExpr, specVar, baseExpr)
+		}
+		if derived {
+			return nil, errAt(pos, typeName, "no var or func named %s found; declare var %s = vow.Spec[%s]{...} in the package — or func %s(...) vow.Spec[%s] to take validation parameters — or set spec=NAME in the tag to use a different name", specVar, specVar, baseExpr, specVar, baseExpr)
+		}
+		return nil, errAt(pos, typeName, "spec=%s names a var or func that does not exist in this package", specVar)
 	}
 
 	if selExpr, ok := field.Type.(*ast.SelectorExpr); ok {
@@ -424,11 +458,85 @@ func resolveValueObject(fset *token.FileSet, table map[string]string, ts *ast.Ty
 		BaseKind:   kind,
 		FieldName:  nameIdent.Name,
 		SpecVar:    specVar,
+		SpecParams: specParams,
 		Sanitizers: opts.Sanitizers,
 		HasJSON:    opts.HasJSON,
 		HasSQL:     opts.HasSQL,
 		HasText:    opts.HasText,
 	}, nil
+}
+
+// specFuncParams renders a spec func's parameter list for the generated
+// constructors. Everything here is syntactic: names and types come straight
+// from the AST, with types printed by types.ExprString exactly as the base
+// type is.
+//
+// Qualified parameter types pull their package into the output file's
+// imports, the same way a qualified base type does — without this the
+// generated file would name a package it never imported.
+func specFuncParams(fset *token.FileSet, table map[string]string, fn *ast.FuncDecl, pos token.Position, typeName string, imports *importCollector) ([]specParam, error) {
+	if fn.Type.Params == nil {
+		return nil, nil
+	}
+
+	var params []specParam
+	for _, field := range fn.Type.Params.List {
+		typeExpr := types.ExprString(field.Type)
+
+		// A variadic parameter is unambiguous here: the generated value
+		// argument comes first, so ...T can only be trailing.
+		elem := field.Type
+		if ell, ok := elem.(*ast.Ellipsis); ok {
+			elem = ell.Elt
+		}
+		if err := collectExprImports(table, elem, imports, pos, typeName); err != nil {
+			return nil, err
+		}
+
+		if len(field.Names) == 0 {
+			// An unnamed parameter still needs a name in the generated
+			// signature; position is stable, so this stays deterministic.
+			params = append(params, specParam{Name: fmt.Sprintf("p%d", len(params)), Type: typeExpr})
+			continue
+		}
+		for _, name := range field.Names {
+			if name.Name == "in" {
+				return nil, errAt(fset.Position(name.Pos()), typeName, "spec func parameter %q shadows the value argument in the generated constructor; rename it", name.Name)
+			}
+			if name.Name == "_" {
+				params = append(params, specParam{Name: fmt.Sprintf("p%d", len(params)), Type: typeExpr})
+				continue
+			}
+			params = append(params, specParam{Name: name.Name, Type: typeExpr})
+		}
+	}
+	return params, nil
+}
+
+// collectExprImports registers the package of any qualified name appearing
+// in expr, so the generated file imports what it references.
+func collectExprImports(table map[string]string, expr ast.Expr, imports *importCollector, pos token.Position, typeName string) error {
+	var walkErr error
+	ast.Inspect(expr, func(n ast.Node) bool {
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		ident, ok := sel.X.(*ast.Ident)
+		if !ok {
+			return true
+		}
+		path, ok := table[ident.Name]
+		if !ok {
+			return true
+		}
+		if err := imports.add(ident.Name, path); err != nil {
+			walkErr = errAt(pos, typeName, "%s", err)
+			return false
+		}
+		return true
+	})
+	return walkErr
 }
 
 // isComparableExpr is a syntactic approximation of comparability: it

@@ -103,7 +103,7 @@ type Email struct {
 	v string ` + bq + `vow:"json"` + bq + `
 }
 `,
-			want: `no var named emailSpec found`,
+			want: `no var or func named emailSpec found`,
 		},
 		{
 			name: "explicit spec= typo",
@@ -114,7 +114,7 @@ type Email struct {
 	v string ` + bq + `vow:"spec=typoSpec"` + bq + `
 }
 `,
-			want: `spec=typoSpec names a var that does not exist in this package`,
+			want: `spec=typoSpec names a var or func that does not exist in this package`,
 		},
 		{
 			name: "json takes a value",
@@ -343,6 +343,97 @@ var emailParser = "unrelated"
 	}
 	if _, err := discoverPackage(dir, "fixture_vow_generated.go", "vow", "vow"); err != nil {
 		t.Fatalf("expected no collision, got: %v", err)
+	}
+}
+
+// TestRejections_SpecFunc covers the rejections specific to a spec being a
+// func rather than a var.
+func TestRejections_SpecFunc(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{
+			name: "parameter named in shadows the value argument",
+			src: `package fixture
+import "github.com/mgiaccone/vow"
+func codeSpec(in string) vow.Spec[string] { return vow.Spec[string]{} }
+type Code struct {
+	v string ` + bq + `vow:"json"` + bq + `
+}
+`,
+			want: `shadows the value argument in the generated constructor; rename it`,
+		},
+		{
+			name: "spec name is a type, neither var nor func",
+			src: `package fixture
+type codeSpec struct{}
+type Code struct {
+	v string ` + bq + `vow:"json"` + bq + `
+}
+`,
+			want: `is declared in this package but is neither a var nor a func`,
+		},
+		{
+			name: "spec name is a const, neither var nor func",
+			src: `package fixture
+const codeSpec = "nope"
+type Code struct {
+	v string ` + bq + `vow:"json"` + bq + `
+}
+`,
+			want: `is declared in this package but is neither a var nor a func`,
+		},
+		{
+			name: "sanitizer var collides with a func-spec type",
+			src: `package fixture
+import "github.com/mgiaccone/vow"
+func codeSpec(k string) vow.Spec[string] { return vow.Spec[string]{} }
+var codeSanitizer = "mine"
+type Code struct {
+	v string ` + bq + `vow:"sanitize=trim"` + bq + `
+}
+`,
+			want: `generated code declares codeSanitizer, but that name is already declared at`,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "types.go"), []byte(c.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := discoverPackage(dir, "fixture_vow_generated.go", "vow", "vow")
+			if err == nil {
+				t.Fatal("expected an error, got nil")
+			}
+			if !strings.Contains(err.Error(), c.want) {
+				t.Fatalf("error = %q\nwant substring %q", err.Error(), c.want)
+			}
+		})
+	}
+}
+
+// TestSpecFunc_NoSanitizerVarWithoutSanitize guards against reserving a name
+// the generator would not actually declare: without sanitize= there is no
+// hoisted chain, so an unrelated codeSanitizer must not be rejected.
+func TestSpecFunc_NoSanitizerVarWithoutSanitize(t *testing.T) {
+	src := `package fixture
+import "github.com/mgiaccone/vow"
+func codeSpec(k string) vow.Spec[string] { return vow.Spec[string]{} }
+var codeSanitizer = "unrelated"
+type Code struct {
+	v string ` + bq + `vow:"json"` + bq + `
+}
+`
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "types.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := discoverPackage(dir, "fixture_vow_generated.go", "vow", "vow"); err != nil {
+		t.Fatalf("expected no collision without sanitize=, got: %v", err)
 	}
 }
 

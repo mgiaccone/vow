@@ -29,6 +29,7 @@ It is not a struct validator: `vow` never reads your request structs or their
 - [What gets generated](#what-gets-generated)
 - [Reference](#reference)
 - [Reporting several failures at once](#reporting-several-failures-at-once)
+- [Validation that depends on another value](#validation-that-depends-on-another-value)
 - [Gotchas](#gotchas)
 - [What Go will not let this library do](#what-go-will-not-let-this-library-do)
 - [Design notes](#design-notes)
@@ -132,6 +133,8 @@ _, err = NewRole("wizard")
 ```go
 func New<T>(in Base) (T, error)
 func Must<T>(in Base) T             // panics; for tests and constants
+                                    // if the spec is a func, its parameters
+                                    // follow the value: New<T>(in, p1, p2)
 func (x T) Unwrap() Base
 func (x T) IsZero() bool            // x == T{}
 func (x T) String() string          // direct return for string bases,
@@ -178,7 +181,7 @@ members.
 | Option | Meaning |
 |---|---|
 | `sanitize=a\|b` | Apply sanitizers `a`, then `b`, before validating. String bases only. |
-| `spec=NAME` | Use `var NAME` instead of the derived spec variable name. |
+| `spec=NAME` | Use `NAME` instead of the derived spec name. |
 | `json` | Emit `MarshalJSON`. |
 | `sql` | Emit `Value` and `Scan`. |
 | `text` | Emit `MarshalText`. |
@@ -189,7 +192,7 @@ A tagged type is matched to its `Spec` **by name**. With no `spec=` option,
 `vow` lowercases the leading run of capitals — keeping the capital that starts
 the next word — and appends `Spec`:
 
-| Type | Expected spec variable |
+| Type | Expected spec name |
 |---|---|
 | `Email` | `emailSpec` |
 | `URLPath` | `urlPathSpec` |
@@ -198,12 +201,15 @@ the next word — and appends `Spec`:
 
 Four things to know:
 
-- **The spec must be a package-level `var`.** Declared inside a function, or
-  in a `_test.go` file, it won't be found — `vow` errors and names the
-  variable it expected. It may live in any file of the package.
-- **Its type parameter must match the base type.** `vow` never type-checks, so
-  a `Spec[int]` paired with a `string` field generates without complaint and
-  fails to compile afterwards, pointing at the generated file.
+- **The spec must be package-level, and may be a `var` or a `func`.** Declared
+  inside a function, or in a `_test.go` file, it won't be found — `vow` errors
+  and names what it expected. It may live in any file of the package. A func's
+  parameters are appended to the generated constructors, after the value — see
+  [Validation that depends on another value](#validation-that-depends-on-another-value).
+- **Its type must match the base type.** `vow` never type-checks, so a
+  `Spec[int]` paired with a `string` field — or a func returning the wrong
+  `Spec` — generates without complaint and fails to compile afterwards,
+  pointing at the generated file.
 - **`spec=NAME` overrides the derivation**, which is how several types share
   one `Spec`.
 - **Some identifiers are reserved.** Declaring one yourself is rejected with
@@ -213,7 +219,8 @@ Four things to know:
   | Declaration | Reserved |
   |---|---|
   | any tagged type or enum | `New<T>`, `Must<T>` |
-  | value object with `sanitize=` | `<name>Parser` (e.g. `emailParser`) |
+  | var spec with `sanitize=` | `<name>Parser` (e.g. `emailParser`) |
+  | func spec with `sanitize=` | `<name>Sanitizer` (e.g. `numberSanitizer`) |
   | enum | `<T>Values`, `<name>Parser`, `<name>Values` (e.g. `RoleValues`, `roleParser`, `roleValues`) |
 
 **`//vow:enum` directive options:**
@@ -290,6 +297,20 @@ stops at the first match and silently drops the rest. `example/invite.go` has
 the full constructor, including the rule a per-type generator can't express:
 the invitee must not be the inviter.
 
+`Collect` takes a `func(In) (Out, error)`, so a constructor needing more than
+the value — one whose spec is a func — uses **`CollectFunc`**, which takes a
+thunk closing over the rest:
+
+```go
+cmd.Number = vow.CollectFunc(&c, FieldNumber, func() (types.TypedNumber, error) {
+	return types.NewTypedNumber(rawNumber, cmd.Type)
+})
+```
+
+Prefer it to calling the constructor and passing the error to `Add`: a bare
+`c.Add(f, err)` reads as a statement that silently does nothing when `err` is
+nil, which is the shape Go's explicit error handling exists to avoid.
+
 Mapping a `vow.Field` to a wire name belongs in your transport adapter, the
 only layer that knows the wire format. Illustration, not part of vow's API:
 
@@ -312,6 +333,68 @@ func toHTTPErrors(err error) map[string]string {
 	return out
 }
 ```
+
+## Validation that depends on another value
+
+Two shapes look alike here and need different tools.
+
+**Two independently valid values, constrained as a pair** — inviter ≠ invitee.
+Parse each, then compare under a guard: `if c.OK(a, b) && …`. That's the
+`Collector` above.
+
+**A value with no independent validity until a discriminator is known** — a
+phone number that must look like a shortcode or an E.164 number depending on
+its type. `"12345"` isn't valid or invalid on its own; the answer depends on
+the type. For this, make the spec a **func**:
+
+```go
+func typedNumberSpec(t PhoneNumberType) vow.Spec[string] {
+	switch t {
+	case TypeShortCode:
+		return shortCodeSpec
+	case TypeLVN:
+		return lvnSpec
+	default:
+		return unknownTypeSpec // fail closed — see below
+	}
+}
+
+type TypedNumber struct {
+	v string `vow:"sanitize=trim,json,sql"`
+}
+```
+
+```go
+func NewTypedNumber(in string, t PhoneNumberType) (TypedNumber, error)
+func MustTypedNumber(in string, t PhoneNumberType) TypedNumber
+```
+
+The discriminator is **an input to validation, not part of the value.** It is
+deliberately not a struct field: a Go field is part of the value and
+participates in `==`, so two identical numbers would compare unequal merely
+because they were validated differently. Nothing is stored, so every other
+generated method is unchanged — including `Scan`, which stays correct because
+there is no discriminator for it to fail to populate.
+
+**Where the guarantees differ, use separate types.** A number checked against
+a known kind and one checked only as "well-formed as some kind" are not
+interchangeable — the second is fine as a lookup key and must never be
+persisted:
+
+```go
+AnyNumber    // union-validated: a lookup key      -> NewAnyNumber(in)
+TypedNumber  // validated against a known kind     -> NewTypedNumber(in, t)
+```
+
+Distinct types make that a compile error rather than a review comment. One
+type with two constructors would forget which guarantee it was built with the
+moment construction returned. See `example/types/number.go` and
+`example/register.go`, which compile.
+
+> **Fail closed.** A zero `vow.Spec{}` has no rules and therefore **accepts
+> everything**. A spec func's `default` must return a spec that rejects, and
+> for the same reason prefer a `switch` over `map[K]vow.Spec[T]` — a map miss
+> yields the zero `Spec` silently.
 
 ## Gotchas
 

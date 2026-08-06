@@ -18,17 +18,18 @@ import (
 {{end}})
 {{range .ValueObjects}}
 {{if .ParserVar}}var {{.ParserVar}} = {{.SpecVar}}.Sanitizing({{range $i, $s := .Sanitizers}}{{if $i}}, {{end}}{{$.VowQualifier}}.{{$s}}{{end}})
+{{end}}{{if .SanitizerVar}}var {{.SanitizerVar}} = {{$.VowQualifier}}.Chain({{range $i, $s := .Sanitizers}}{{if $i}}, {{end}}{{$.VowQualifier}}.{{$s}}{{end}})
 {{end}}
-func New{{.Name}}(in {{.BaseType}}) ({{.Name}}, error) {
-	v, err := {{if .ParserVar}}{{.ParserVar}}{{else}}{{.SpecVar}}{{end}}.Parse(in)
+func New{{.Name}}(in {{.BaseType}}{{.ParamSignature}}) ({{.Name}}, error) {
+	v, err := {{if .SpecIsFunc}}{{.SpecVar}}({{.ParamNames}}){{if .SanitizerVar}}.Sanitizing({{.SanitizerVar}}){{end}}{{else if .ParserVar}}{{.ParserVar}}{{else}}{{.SpecVar}}{{end}}.Parse(in)
 	if err != nil {
 		return {{.Name}}{}, err
 	}
 	return {{.Name}}{ {{.FieldName}}: v }, nil
 }
 
-func Must{{.Name}}(in {{.BaseType}}) {{.Name}} {
-	v, err := New{{.Name}}(in)
+func Must{{.Name}}(in {{.BaseType}}{{.ParamSignature}}) {{.Name}} {
+	v, err := New{{.Name}}(in{{if .ParamNames}}, {{.ParamNames}}{{end}})
 	if err != nil {
 		panic(err)
 	}

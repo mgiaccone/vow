@@ -11,6 +11,54 @@ import (
 	"time"
 )
 
+var anyNumberParser = anyNumberSpec.Sanitizing(vow.Trim)
+
+func NewAnyNumber(in string) (AnyNumber, error) {
+	v, err := anyNumberParser.Parse(in)
+	if err != nil {
+		return AnyNumber{}, err
+	}
+	return AnyNumber{v: v}, nil
+}
+
+func MustAnyNumber(in string) AnyNumber {
+	v, err := NewAnyNumber(in)
+	if err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func (x AnyNumber) Unwrap() string { return x.v }
+
+func (x AnyNumber) IsZero() bool { return x == AnyNumber{} }
+
+func (x AnyNumber) String() string {
+	return x.v
+}
+
+func (x AnyNumber) MarshalJSON() ([]byte, error) { return json.Marshal(x.v) }
+
+func (x AnyNumber) Value() (driver.Value, error) {
+	return x.v, nil
+}
+
+func (x *AnyNumber) Scan(src any) error {
+	if src == nil {
+		*x = AnyNumber{}
+		return nil
+	}
+	switch v := src.(type) {
+	case string:
+		x.v = v
+	case []byte:
+		x.v = string(v)
+	default:
+		return fmt.Errorf("AnyNumber.Scan: unsupported type %T", src)
+	}
+	return nil
+}
+
 var emailParser = emailSpec.Sanitizing(vow.Trim, vow.Lower)
 
 func NewEmail(in string) (Email, error) {
@@ -133,6 +181,108 @@ func (x *Quantity) Scan(src any) error {
 		x.v = int(v)
 	default:
 		return fmt.Errorf("Quantity.Scan: unsupported type %T", src)
+	}
+	return nil
+}
+
+var typedNumberSanitizer = vow.Chain(vow.Trim)
+
+func NewTypedNumber(in string, t PhoneNumberType) (TypedNumber, error) {
+	v, err := typedNumberSpec(t).Sanitizing(typedNumberSanitizer).Parse(in)
+	if err != nil {
+		return TypedNumber{}, err
+	}
+	return TypedNumber{v: v}, nil
+}
+
+func MustTypedNumber(in string, t PhoneNumberType) TypedNumber {
+	v, err := NewTypedNumber(in, t)
+	if err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func (x TypedNumber) Unwrap() string { return x.v }
+
+func (x TypedNumber) IsZero() bool { return x == TypedNumber{} }
+
+func (x TypedNumber) String() string {
+	return x.v
+}
+
+func (x TypedNumber) MarshalJSON() ([]byte, error) { return json.Marshal(x.v) }
+
+func (x TypedNumber) MarshalText() ([]byte, error) {
+	return []byte(x.v), nil
+}
+
+func (x TypedNumber) Value() (driver.Value, error) {
+	return x.v, nil
+}
+
+func (x *TypedNumber) Scan(src any) error {
+	if src == nil {
+		*x = TypedNumber{}
+		return nil
+	}
+	switch v := src.(type) {
+	case string:
+		x.v = v
+	case []byte:
+		x.v = string(v)
+	default:
+		return fmt.Errorf("TypedNumber.Scan: unsupported type %T", src)
+	}
+	return nil
+}
+
+var phoneNumberTypeValues = []PhoneNumberType{TypeShortCode, TypeLVN}
+
+var phoneNumberTypeParser = vow.Spec[string]{Rules: []vow.Rule[string]{vow.OneOf("shortcode", "lvn")}}.Sanitizing(vow.Trim, vow.Lower)
+
+func PhoneNumberTypeValues() []PhoneNumberType { return slices.Clone(phoneNumberTypeValues) }
+
+func NewPhoneNumberType(in string) (PhoneNumberType, error) {
+	v, err := phoneNumberTypeParser.Parse(in)
+	if err != nil {
+		return "", err
+	}
+	return PhoneNumberType(v), nil
+}
+
+func MustPhoneNumberType(in string) PhoneNumberType {
+	v, err := NewPhoneNumberType(in)
+	if err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func (x PhoneNumberType) IsValid() bool { return slices.Contains(phoneNumberTypeValues, x) }
+
+func (x PhoneNumberType) String() string { return string(x) }
+
+func (x PhoneNumberType) Unwrap() string { return string(x) }
+
+func (x PhoneNumberType) IsZero() bool { return x == PhoneNumberType("") }
+
+func (x PhoneNumberType) MarshalJSON() ([]byte, error) { return json.Marshal(string(x)) }
+
+func (x PhoneNumberType) Value() (driver.Value, error) { return string(x), nil }
+
+func (x *PhoneNumberType) Scan(src any) error {
+	if src == nil {
+		*x = PhoneNumberType("")
+		return nil
+	}
+	switch v := src.(type) {
+	case string:
+		*x = PhoneNumberType(v)
+	case []byte:
+		*x = PhoneNumberType(v)
+	default:
+		return fmt.Errorf("PhoneNumberType.Scan: unsupported type %T", src)
 	}
 	return nil
 }
