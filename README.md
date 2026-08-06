@@ -354,94 +354,6 @@ func toHTTPErrors(err error) map[string]string {
 }
 ```
 
-## Gotchas
-
-**A blank line detaches `//vow:enum`.** Go's doc-comment association rule —
-the same one that governs `//go:build` — requires the directive to
-immediately precede the declaration, with no blank line between them:
-
-```go
-// Correct — directive is attached:
-//vow:enum
-type Role string
-
-// Wrong — the blank line detaches it; Role is treated as a plain type, and
-// vow reports this as an error naming the position, rather than silently
-// generating nothing:
-//vow:enum
-
-type Role string
-```
-
-**`Spec.Sanitize` and `sanitize=` don't compose.** `Sanitizing` *replaces*
-`Sanitize` instead of chaining onto it, and the generator calls it for every
-tag-declared sanitizer. A hand-written `vow.Spec{Sanitize: myFunc}` on a type
-whose tag also says `sanitize=trim` loses `myFunc`. Use one or the other.
-
-**No `UnmarshalJSON`.** Its signature carries a byte slice and nothing else,
-so a decode failure can't say which field broke or join a `Collector` result.
-Decode into a string DTO and call `New<T>` where the field is known.
-
-**`Scan` does not validate.** Tightening a rule or retiring an enum member
-would otherwise make historical rows unloadable — including the ones you'd
-need to load to fix them. Validate at the boundary, trust storage.
-
-**Enum conversions still compile.** `Role("wizard")` is legal from anywhere.
-But that's your own code, at a site you can grep for, not untrusted input the
-way an invalid `Email` string is.
-
-**Single-field value objects only.** `Money{amount, currency}` needs
-cross-field rules and a multi-argument constructor, which `New<T>(in Base)`
-can't express. Hand-write those with `vow.Collector`, as
-[`example/invite.go`](example/invite.go) does for `inviter != invitee`.
-
-## Design notes
-
-### Deliberate choices
-
-**Rules are Go, not tag syntax.** A validation DSL in a struct tag needs a
-quote-aware parser to survive a regex containing a comma, and costs you
-go-to-definition, rename refactoring, and named-constant references. Ordinary
-[`Rule[T]`](https://pkg.go.dev/github.com/mgiaccone/vow#Rule) functions keep
-all of that.
-
-**One file per package, not configurable.** Spec vars and enum consts already
-resolve across the whole package. Per-file output would mean the generator
-deleting files it believes it owns. One always-rewritten path makes stale
-output impossible.
-
-### Limits Go imposes
-
-Properties of the language, not shortcomings to work around later. None is on
-a roadmap.
-
-- **Every type has a zero value, and nothing can forbid it.** `var e Email`
-  is legal and never passes through a constructor. Hence `IsZero` on every
-  generated type, `IsValid` on every enum, and a failed `Collect` returning
-  the zero value.
-- **Conversions to a defined type are always legal.** Go can't restrict them,
-  so enums trade unforgeability for real `const` members and working
-  exhaustiveness linters.
-- **Unexported means package-scoped, not type-scoped.** Inside `package
-  types`, `Email{v: "garbage"}` compiles. Keep that package free of code with
-  a motive to bypass a constructor, rather than isolating each type in its
-  own package.
-- **There are no typed struct constants.** A struct-wrapped value object can
-  never be a `const`. This is why enums are defined string types and value
-  objects are struct wrappers: the two need different representations to get
-  `const` members and unforgeability. And only a struct field can carry a tag,
-  so enums need a directive instead.
-- **Generics can't produce distinct nominal types.** A single
-  `Validated[T any]` would make `Validated[string]` the same type for an email
-  and a display name. This is why the library generates code instead of
-  shipping one generic type.
-- **Struct tags are backtick literals.** No embedded quotes, nothing
-  type-checked, and `,`-splitting corrupts any regex containing one. Hence
-  rules as ordinary Go.
-- **Unexported fields are invisible to reflection-based libraries.** The
-  generated `MarshalJSON`/`MarshalText`/`Value`/`Scan` cover the common paths;
-  a library reaching for struct fields directly sees nothing.
-
 ## Reference
 
 **Struct tag options** (key `vow`, overridable with `-tag-key`):
@@ -577,6 +489,94 @@ that changes when upstream releases, breaking a
 ```go
 //go:generate go run github.com/mgiaccone/vow/cmd/vow@vX.Y.Z -dir=.
 ```
+
+## Gotchas
+
+**A blank line detaches `//vow:enum`.** Go's doc-comment association rule —
+the same one that governs `//go:build` — requires the directive to
+immediately precede the declaration, with no blank line between them:
+
+```go
+// Correct — directive is attached:
+//vow:enum
+type Role string
+
+// Wrong — the blank line detaches it; Role is treated as a plain type, and
+// vow reports this as an error naming the position, rather than silently
+// generating nothing:
+//vow:enum
+
+type Role string
+```
+
+**`Spec.Sanitize` and `sanitize=` don't compose.** `Sanitizing` *replaces*
+`Sanitize` instead of chaining onto it, and the generator calls it for every
+tag-declared sanitizer. A hand-written `vow.Spec{Sanitize: myFunc}` on a type
+whose tag also says `sanitize=trim` loses `myFunc`. Use one or the other.
+
+**No `UnmarshalJSON`.** Its signature carries a byte slice and nothing else,
+so a decode failure can't say which field broke or join a `Collector` result.
+Decode into a string DTO and call `New<T>` where the field is known.
+
+**`Scan` does not validate.** Tightening a rule or retiring an enum member
+would otherwise make historical rows unloadable — including the ones you'd
+need to load to fix them. Validate at the boundary, trust storage.
+
+**Enum conversions still compile.** `Role("wizard")` is legal from anywhere.
+But that's your own code, at a site you can grep for, not untrusted input the
+way an invalid `Email` string is.
+
+**Single-field value objects only.** `Money{amount, currency}` needs
+cross-field rules and a multi-argument constructor, which `New<T>(in Base)`
+can't express. Hand-write those with `vow.Collector`, as
+[`example/invite.go`](example/invite.go) does for `inviter != invitee`.
+
+## Design notes
+
+### Deliberate choices
+
+**Rules are Go, not tag syntax.** A validation DSL in a struct tag needs a
+quote-aware parser to survive a regex containing a comma, and costs you
+go-to-definition, rename refactoring, and named-constant references. Ordinary
+[`Rule[T]`](https://pkg.go.dev/github.com/mgiaccone/vow#Rule) functions keep
+all of that.
+
+**One file per package, not configurable.** Spec vars and enum consts already
+resolve across the whole package. Per-file output would mean the generator
+deleting files it believes it owns. One always-rewritten path makes stale
+output impossible.
+
+### Limits Go imposes
+
+Properties of the language, not shortcomings to work around later. None is on
+a roadmap.
+
+- **Every type has a zero value, and nothing can forbid it.** `var e Email`
+  is legal and never passes through a constructor. Hence `IsZero` on every
+  generated type, `IsValid` on every enum, and a failed `Collect` returning
+  the zero value.
+- **Conversions to a defined type are always legal.** Go can't restrict them,
+  so enums trade unforgeability for real `const` members and working
+  exhaustiveness linters.
+- **Unexported means package-scoped, not type-scoped.** Inside `package
+  types`, `Email{v: "garbage"}` compiles. Keep that package free of code with
+  a motive to bypass a constructor, rather than isolating each type in its
+  own package.
+- **There are no typed struct constants.** A struct-wrapped value object can
+  never be a `const`. This is why enums are defined string types and value
+  objects are struct wrappers: the two need different representations to get
+  `const` members and unforgeability. And only a struct field can carry a tag,
+  so enums need a directive instead.
+- **Generics can't produce distinct nominal types.** A single
+  `Validated[T any]` would make `Validated[string]` the same type for an email
+  and a display name. This is why the library generates code instead of
+  shipping one generic type.
+- **Struct tags are backtick literals.** No embedded quotes, nothing
+  type-checked, and `,`-splitting corrupts any regex containing one. Hence
+  rules as ordinary Go.
+- **Unexported fields are invisible to reflection-based libraries.** The
+  generated `MarshalJSON`/`MarshalText`/`Value`/`Scan` cover the common paths;
+  a library reaching for struct fields directly sees nothing.
 
 ## Alternatives
 
