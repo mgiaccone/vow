@@ -17,11 +17,11 @@ import (
 {{range .AllImports}}	{{if .Alias}}{{.Alias}} {{end}}"{{.Path}}"
 {{end}})
 {{range .ValueObjects}}
-{{if .ParserVar}}var {{.ParserVar}} = {{.SpecVar}}.Sanitizing({{range $i, $s := .Sanitizers}}{{if $i}}, {{end}}{{$.VowQualifier}}.{{$s}}{{end}})
+{{if .ParserVar}}var {{.ParserVar}} = {{.SpecExpr}}.Sanitizing({{range $i, $s := .Sanitizers}}{{if $i}}, {{end}}{{$.VowQualifier}}.{{$s}}{{end}})
 {{end}}{{if .SanitizerVar}}var {{.SanitizerVar}} = {{$.VowQualifier}}.Chain({{range $i, $s := .Sanitizers}}{{if $i}}, {{end}}{{$.VowQualifier}}.{{$s}}{{end}})
 {{end}}
 func New{{.Name}}(in {{.BaseType}}{{.ParamSignature}}) ({{.Name}}, error) {
-	v, err := {{if .SpecIsFunc}}{{.SpecVar}}({{.ParamNames}}){{if .SanitizerVar}}.Sanitizing({{.SanitizerVar}}){{end}}{{else if .ParserVar}}{{.ParserVar}}{{else}}{{.SpecVar}}{{end}}.Parse(in)
+	v, err := {{if .ParserVar}}{{.ParserVar}}{{else}}{{.SpecExpr}}{{if .SanitizerVar}}.Sanitizing({{.SanitizerVar}}){{end}}{{end}}.Parse(in)
 	if err != nil {
 		return {{.Name}}{}, err
 	}

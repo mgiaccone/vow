@@ -422,11 +422,13 @@ func resolveValueObject(fset *token.FileSet, table map[string]string, ts *ast.Ty
 	// go/types — so a mismatch surfaces as a compile error in the generated
 	// file, exactly as a mismatched Spec[int]/string base already does.
 	var specParams []specParam
+	var specIsFuncDecl bool
 	specFn, isFunc := decls.funcs[specVar]
 	switch {
 	case decls.vars[specVar]:
 		// nothing to do: today's path
 	case isFunc:
+		specIsFuncDecl = true
 		specParams, err = specFuncParams(fset, table, specFn, pos, typeName, imports)
 		if err != nil {
 			return nil, err
@@ -452,17 +454,18 @@ func resolveValueObject(fset *token.FileSet, table map[string]string, ts *ast.Ty
 	}
 
 	return &valueObject{
-		Name:       typeName,
-		Pos:        pos,
-		BaseType:   baseExpr,
-		BaseKind:   kind,
-		FieldName:  nameIdent.Name,
-		SpecVar:    specVar,
-		SpecParams: specParams,
-		Sanitizers: opts.Sanitizers,
-		HasJSON:    opts.HasJSON,
-		HasSQL:     opts.HasSQL,
-		HasText:    opts.HasText,
+		Name:           typeName,
+		Pos:            pos,
+		BaseType:       baseExpr,
+		BaseKind:       kind,
+		FieldName:      nameIdent.Name,
+		SpecVar:        specVar,
+		SpecParams:     specParams,
+		SpecIsFuncDecl: specIsFuncDecl,
+		Sanitizers:     opts.Sanitizers,
+		HasJSON:        opts.HasJSON,
+		HasSQL:         opts.HasSQL,
+		HasText:        opts.HasText,
 	}, nil
 }
 
