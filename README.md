@@ -9,14 +9,16 @@
 
 ## The problem
 
-The same string gets re-validated every time it crosses a boundary: once in
+The same value gets re-validated every time it crosses a boundary: once in
 the HTTP handler, again before the SQL insert, again in the job that reads it
 back. Nothing stops a value from existing without having passed any of them,
 so the checks drift apart and each becomes its own bug.
 
 `vow` moves validation to construction. A `vow.Spec` sanitizes and validates,
 and the generator turns it into the only constructor that can produce the
-type — so holding an `Email` means it is already valid.
+type, so holding an `Email` means it is already valid. Strings are the common
+case, not the only one: a `Quantity` over `int` or an `Expiry` over
+`time.Time` works the same way, as does any comparable base type.
 
 It is not a struct validator: `vow` never reads your request structs or their
 `json` tags, only the individual values that go into them.
