@@ -356,7 +356,9 @@ func toHTTPErrors(err error) map[string]string {
 
 ## Reference
 
-**Struct tag options** (key `vow`, overridable with `-tag-key`):
+### Struct tag options
+
+Key `vow`, overridable with `-tag-key`:
 
 | Option | Meaning |
 |---|---|
@@ -375,7 +377,7 @@ against pgx v5.10.0.
 [`example/types/types_test.go`](example/types/types_test.go) asserts the part
 `vow` controls, that the interfaces are satisfied, without importing pgx.
 
-**`//vow:enum` directive options:**
+### `//vow:enum` directive options
 
 | Option | Meaning |
 |---|---|
@@ -386,6 +388,39 @@ against pgx v5.10.0.
 
 `spec=` is not valid here — enum membership is generated from the `const`
 block, so there is no user-authored `Spec` to name.
+
+### Built-in sanitizers
+
+Named in `sanitize=`, and a closed set: a sanitizer cannot fail, which is
+what makes it safe to name in a struct tag.
+
+| Tag name | Function |
+|---|---|
+| `trim` | `vow.Trim` |
+| `lower` | `vow.Lower` |
+| `upper` | `vow.Upper` |
+| `collapse` | `vow.Collapse` |
+
+`vow.Chain(ss...)` composes several sanitizers into one, and
+`Spec.Sanitizing(ss...)` returns a copy of a `Spec` with that chain attached.
+Generated code calls both; you rarely need them directly.
+
+### Built-in rules
+
+Anything not here is an ordinary `vow.Rule[T]` you write yourself, as
+`Matches` is used with a custom pattern above.
+
+| Function | Sentinel | Message and use |
+|---|---|---|
+| `NotBlank` | `ErrBlank` | is required — strings, empty once whitespace is trimmed |
+| `NotZero` | `ErrBlank` | is required — any comparable, e.g. a `time.Time` or UUID |
+| `MaxLen(n)` | `ErrTooLong` | must be at most `n` characters |
+| `MinLen(n)` | `ErrTooShort` | must be at least `n` characters |
+| `Matches(re, msg)` | `ErrNotMatch` | `msg` |
+| `OneOf(...)` | `ErrNotInSet` | must be one of: ... |
+| `InRange(lo, hi)` | `ErrOutOfRange` | must be between `lo` and `hi` |
+| `Positive` | `ErrOutOfRange` | must be greater than zero |
+| `NonNegative` | `ErrOutOfRange` | must not be negative |
 
 ### Reserved identifiers
 
@@ -433,34 +468,7 @@ func (x T) Value() (driver.Value, error)     // if sql
 func (x *T) Scan(src any) error              // if sql
 ```
 
-**Built-in sanitizers** (`sanitize=`, closed set):
-
-| Tag name | Function |
-|---|---|
-| `trim` | `vow.Trim` |
-| `lower` | `vow.Lower` |
-| `upper` | `vow.Upper` |
-| `collapse` | `vow.Collapse` |
-
-`vow.Chain(ss...)` composes several sanitizers into one, and
-`Spec.Sanitizing(ss...)` returns a copy of a `Spec` with that chain attached.
-Generated code calls both; you rarely need them directly.
-
-**Built-in rules:**
-
-| Function | Sentinel | Message and use |
-|---|---|---|
-| `NotBlank` | `ErrBlank` | is required — strings, empty once whitespace is trimmed |
-| `NotZero` | `ErrBlank` | is required — any comparable, e.g. a `time.Time` or UUID |
-| `MaxLen(n)` | `ErrTooLong` | must be at most `n` characters |
-| `MinLen(n)` | `ErrTooShort` | must be at least `n` characters |
-| `Matches(re, msg)` | `ErrNotMatch` | `msg` |
-| `OneOf(...)` | `ErrNotInSet` | must be one of: ... |
-| `InRange(lo, hi)` | `ErrOutOfRange` | must be between `lo` and `hi` |
-| `Positive` | `ErrOutOfRange` | must be greater than zero |
-| `NonNegative` | `ErrOutOfRange` | must not be negative |
-
-**CLI flags** (`cmd/vow`):
+### CLI flags
 
 | Flag | Default | Meaning |
 |---|---|---|
