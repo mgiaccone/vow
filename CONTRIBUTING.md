@@ -83,6 +83,14 @@ don't know it. Read the reason before working around the rule.
   that depends on another value is expressed by the spec being a *func* whose
   parameters reach the constructor — one spec, taking arguments — not by
   widening either of these.
+- **A spec's declaration kind and its parameter count decide different
+  things.** The kind decides how the Spec is named in generated code
+  (`emailSpec` for a var, `emailSpec()` for a func); the parameter count
+  decides what can be hoisted, since a Spec depending on a runtime argument
+  cannot be composed at package init. `SpecIsFuncDecl` and `SpecHasParams`
+  are separate for that reason. Collapsing them back into one predicate
+  emitted `emailSpec.Parse` for a zero-parameter func, which does not
+  compile, and nothing rejected it.
 - **No `UnmarshalJSON` on generated types.** A decode error carries no field
   identity, so it can't join a `Collector` result.
 - **No validation in `Scan`.** Retiring an enum member or tightening a rule
@@ -119,11 +127,11 @@ an implementation.
 
 Several things are deliberately out of scope — struct validation,
 `UnmarshalJSON`, validation inside `Scan`, multi-field value objects, and
-rules expressed in struct tags. The README's [Gotchas][g] and [What Go will
-not let this library do][w] sections explain the reasoning for each.
+rules expressed in struct tags. The README's [Gotchas][g] and [Limits Go
+imposes][w] sections explain the reasoning for each.
 
 [g]: README.md#gotchas
-[w]: README.md#what-go-will-not-let-this-library-do
+[w]: README.md#limits-go-imposes
 
 ## Commit messages
 

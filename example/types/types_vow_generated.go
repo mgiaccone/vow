@@ -11,41 +11,41 @@ import (
 	"time"
 )
 
-var anyNumberParser = anyNumberSpec.Sanitizing(vow.Trim)
+var anyPostalCodeParser = anyPostalCodeSpec.Sanitizing(vow.Trim, vow.Upper)
 
-func NewAnyNumber(in string) (AnyNumber, error) {
-	v, err := anyNumberParser.Parse(in)
+func NewAnyPostalCode(in string) (AnyPostalCode, error) {
+	v, err := anyPostalCodeParser.Parse(in)
 	if err != nil {
-		return AnyNumber{}, err
+		return AnyPostalCode{}, err
 	}
-	return AnyNumber{v: v}, nil
+	return AnyPostalCode{v: v}, nil
 }
 
-func MustAnyNumber(in string) AnyNumber {
-	v, err := NewAnyNumber(in)
+func MustAnyPostalCode(in string) AnyPostalCode {
+	v, err := NewAnyPostalCode(in)
 	if err != nil {
 		panic(err)
 	}
 	return v
 }
 
-func (x AnyNumber) Unwrap() string { return x.v }
+func (x AnyPostalCode) Unwrap() string { return x.v }
 
-func (x AnyNumber) IsZero() bool { return x == AnyNumber{} }
+func (x AnyPostalCode) IsZero() bool { return x == AnyPostalCode{} }
 
-func (x AnyNumber) String() string {
+func (x AnyPostalCode) String() string {
 	return x.v
 }
 
-func (x AnyNumber) MarshalJSON() ([]byte, error) { return json.Marshal(x.v) }
+func (x AnyPostalCode) MarshalJSON() ([]byte, error) { return json.Marshal(x.v) }
 
-func (x AnyNumber) Value() (driver.Value, error) {
+func (x AnyPostalCode) Value() (driver.Value, error) {
 	return x.v, nil
 }
 
-func (x *AnyNumber) Scan(src any) error {
+func (x *AnyPostalCode) Scan(src any) error {
 	if src == nil {
-		*x = AnyNumber{}
+		*x = AnyPostalCode{}
 		return nil
 	}
 	switch v := src.(type) {
@@ -54,7 +54,7 @@ func (x *AnyNumber) Scan(src any) error {
 	case []byte:
 		x.v = string(v)
 	default:
-		return fmt.Errorf("AnyNumber.Scan: unsupported type %T", src)
+		return fmt.Errorf("AnyPostalCode.Scan: unsupported type %T", src)
 	}
 	return nil
 }
@@ -141,6 +141,58 @@ func (x Expiry) MarshalText() ([]byte, error) {
 	return x.v.MarshalText()
 }
 
+var postalCodeSanitizer = vow.Chain(vow.Trim, vow.Upper)
+
+func NewPostalCode(in string, c Country) (PostalCode, error) {
+	v, err := postalCodeSpec(c).Sanitizing(postalCodeSanitizer).Parse(in)
+	if err != nil {
+		return PostalCode{}, err
+	}
+	return PostalCode{v: v}, nil
+}
+
+func MustPostalCode(in string, c Country) PostalCode {
+	v, err := NewPostalCode(in, c)
+	if err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func (x PostalCode) Unwrap() string { return x.v }
+
+func (x PostalCode) IsZero() bool { return x == PostalCode{} }
+
+func (x PostalCode) String() string {
+	return x.v
+}
+
+func (x PostalCode) MarshalJSON() ([]byte, error) { return json.Marshal(x.v) }
+
+func (x PostalCode) MarshalText() ([]byte, error) {
+	return []byte(x.v), nil
+}
+
+func (x PostalCode) Value() (driver.Value, error) {
+	return x.v, nil
+}
+
+func (x *PostalCode) Scan(src any) error {
+	if src == nil {
+		*x = PostalCode{}
+		return nil
+	}
+	switch v := src.(type) {
+	case string:
+		x.v = v
+	case []byte:
+		x.v = string(v)
+	default:
+		return fmt.Errorf("PostalCode.Scan: unsupported type %T", src)
+	}
+	return nil
+}
+
 func NewQuantity(in int) (Quantity, error) {
 	v, err := quantitySpec.Parse(in)
 	if err != nil {
@@ -185,104 +237,52 @@ func (x *Quantity) Scan(src any) error {
 	return nil
 }
 
-var typedNumberSanitizer = vow.Chain(vow.Trim)
+var countryValues = []Country{CountryUS, CountryCA}
 
-func NewTypedNumber(in string, t PhoneNumberType) (TypedNumber, error) {
-	v, err := typedNumberSpec(t).Sanitizing(typedNumberSanitizer).Parse(in)
-	if err != nil {
-		return TypedNumber{}, err
-	}
-	return TypedNumber{v: v}, nil
-}
+var countryParser = vow.Spec[string]{Rules: []vow.Rule[string]{vow.OneOf("US", "CA")}}.Sanitizing(vow.Trim, vow.Upper)
 
-func MustTypedNumber(in string, t PhoneNumberType) TypedNumber {
-	v, err := NewTypedNumber(in, t)
-	if err != nil {
-		panic(err)
-	}
-	return v
-}
+func CountryValues() []Country { return slices.Clone(countryValues) }
 
-func (x TypedNumber) Unwrap() string { return x.v }
-
-func (x TypedNumber) IsZero() bool { return x == TypedNumber{} }
-
-func (x TypedNumber) String() string {
-	return x.v
-}
-
-func (x TypedNumber) MarshalJSON() ([]byte, error) { return json.Marshal(x.v) }
-
-func (x TypedNumber) MarshalText() ([]byte, error) {
-	return []byte(x.v), nil
-}
-
-func (x TypedNumber) Value() (driver.Value, error) {
-	return x.v, nil
-}
-
-func (x *TypedNumber) Scan(src any) error {
-	if src == nil {
-		*x = TypedNumber{}
-		return nil
-	}
-	switch v := src.(type) {
-	case string:
-		x.v = v
-	case []byte:
-		x.v = string(v)
-	default:
-		return fmt.Errorf("TypedNumber.Scan: unsupported type %T", src)
-	}
-	return nil
-}
-
-var phoneNumberTypeValues = []PhoneNumberType{TypeShortCode, TypeLVN}
-
-var phoneNumberTypeParser = vow.Spec[string]{Rules: []vow.Rule[string]{vow.OneOf("shortcode", "lvn")}}.Sanitizing(vow.Trim, vow.Lower)
-
-func PhoneNumberTypeValues() []PhoneNumberType { return slices.Clone(phoneNumberTypeValues) }
-
-func NewPhoneNumberType(in string) (PhoneNumberType, error) {
-	v, err := phoneNumberTypeParser.Parse(in)
+func NewCountry(in string) (Country, error) {
+	v, err := countryParser.Parse(in)
 	if err != nil {
 		return "", err
 	}
-	return PhoneNumberType(v), nil
+	return Country(v), nil
 }
 
-func MustPhoneNumberType(in string) PhoneNumberType {
-	v, err := NewPhoneNumberType(in)
+func MustCountry(in string) Country {
+	v, err := NewCountry(in)
 	if err != nil {
 		panic(err)
 	}
 	return v
 }
 
-func (x PhoneNumberType) IsValid() bool { return slices.Contains(phoneNumberTypeValues, x) }
+func (x Country) IsValid() bool { return slices.Contains(countryValues, x) }
 
-func (x PhoneNumberType) String() string { return string(x) }
+func (x Country) String() string { return string(x) }
 
-func (x PhoneNumberType) Unwrap() string { return string(x) }
+func (x Country) Unwrap() string { return string(x) }
 
-func (x PhoneNumberType) IsZero() bool { return x == PhoneNumberType("") }
+func (x Country) IsZero() bool { return x == Country("") }
 
-func (x PhoneNumberType) MarshalJSON() ([]byte, error) { return json.Marshal(string(x)) }
+func (x Country) MarshalJSON() ([]byte, error) { return json.Marshal(string(x)) }
 
-func (x PhoneNumberType) Value() (driver.Value, error) { return string(x), nil }
+func (x Country) Value() (driver.Value, error) { return string(x), nil }
 
-func (x *PhoneNumberType) Scan(src any) error {
+func (x *Country) Scan(src any) error {
 	if src == nil {
-		*x = PhoneNumberType("")
+		*x = Country("")
 		return nil
 	}
 	switch v := src.(type) {
 	case string:
-		*x = PhoneNumberType(v)
+		*x = Country(v)
 	case []byte:
-		*x = PhoneNumberType(v)
+		*x = Country(v)
 	default:
-		return fmt.Errorf("PhoneNumberType.Scan: unsupported type %T", src)
+		return fmt.Errorf("Country.Scan: unsupported type %T", src)
 	}
 	return nil
 }

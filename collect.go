@@ -109,10 +109,10 @@ func Collect[In, Out any](c *Collector, f Field, in In, parse func(In) (Out, err
 // CollectFunc runs parse and records any failure against f on c, returning
 // parse's result. Unlike Collect, parse takes no argument: it closes over
 // whatever it needs, which is what makes it fit a constructor taking more
-// than the value alone — one whose spec is a func, for instance.
+// than the value alone — one whose spec takes parameters, for instance.
 //
-//	cmd.Number = vow.CollectFunc(&c, FieldNumber, func() (types.TypedNumber, error) {
-//		return types.NewTypedNumber(raw, cmd.Type)
+//	cmd.PostalCode = vow.CollectFunc(&c, FieldPostalCode, func() (types.PostalCode, error) {
+//		return types.NewPostalCode(raw, cmd.Country)
 //	})
 //
 // Prefer this to calling the constructor yourself and passing the error to
