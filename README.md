@@ -333,6 +333,18 @@ failure the result is `nil` rather than the elements that did parse — a
 shortened slice would let a caller who skipped `c.Err()` broadcast to a
 subset of the intended audience.
 
+An empty list records nothing on its own — there are no elements to fail.
+Whether that's acceptable belongs to the field, so say it with an option:
+
+```go
+cmd.Recipients = vow.CollectSlice(&c, FieldRecipients, raw, types.NewEmail, vow.NotEmpty)
+// -> Recipients: must not be empty
+```
+
+`NotEmpty` reuses `ErrBlank`, the sentinel `NotBlank` and `NotZero` return: a
+required list with nothing in it is missing in the same sense a required
+string with nothing in it is.
+
 **Duplicates are a property of the list, not of the element type**, so they
 are decided per call rather than in the element's `Spec`: the same `Email`
 may repeat freely in one field and not another. Two options cover it, and
@@ -347,9 +359,10 @@ cmd.Recipients = vow.CollectSlice(&c, FieldRecipients, raw, types.NewEmail, vow.
 // -> Recipients: [2] duplicates item 0
 ```
 
-Pass them **as functions, not calls** — `vow.Deduped`, not `vow.Deduped()`.
-That is what lets Go infer the element type from the constructor instead of
-making you write `vow.Deduped[types.Email]()` at every call site.
+Pass every option **as a function, not a call** — `vow.Deduped`, not
+`vow.Deduped()`. That is what lets Go infer the element type from the
+constructor instead of making you write `vow.Deduped[types.Email]()` at every
+call site, and it is why the built-in options take no parameters.
 
 `NoDuplicates` reports through the same `ElementErrors` path as a parse
 failure, so it needs no special handling downstream and `errors.Is(err,

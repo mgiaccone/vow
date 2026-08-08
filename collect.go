@@ -219,6 +219,26 @@ func (e ElementErrors) Unwrap() []error {
 // constructor instead of making you name it at every call site.
 type SliceOption[Out any] func(c *Collector, f Field, s []Out) []Out
 
+// NotEmpty records a failure when the list has no elements:
+//
+//	cmd.Recipients = vow.CollectSlice(&c, FieldRecipients, raw, types.NewEmail, vow.NotEmpty)
+//
+// Without it an empty list parses cleanly, because CollectSlice reports on the
+// elements it was given and an absent element cannot fail. Whether "none" is
+// acceptable belongs to the field, not to the helper, which is why it is an
+// option rather than the default.
+//
+// It reuses ErrBlank, the sentinel NotBlank and NotZero return: a required
+// list with nothing in it is missing in the same sense a required string with
+// nothing in it is. Unlike the deduplication options it places no constraint
+// on the element type.
+func NotEmpty[T any](c *Collector, f Field, s []T) []T {
+	if len(s) == 0 {
+		c.Add(f, Reject("must not be empty", ErrBlank))
+	}
+	return s
+}
+
 // Deduped drops later occurrences of a value that already appeared, keeping
 // the order of first appearance:
 //
@@ -302,9 +322,13 @@ func NoDuplicates[T comparable](c *Collector, f Field, s []T) []T {
 // exists to prevent.
 //
 // Options run after every element has parsed, and apply to the collection
-// rather than to any one element — see Deduped and NoDuplicates. An option
-// that records a failure makes CollectSlice return nil too, so the contract
-// is the same whichever way the field failed.
+// rather than to any one element — see NotEmpty, Deduped, and NoDuplicates.
+// An option that records a failure makes CollectSlice return nil too, so the
+// contract is the same whichever way the field failed.
+//
+// An empty or nil in records nothing on its own: there are no elements to
+// fail. Whether a list is allowed to be empty is the field's business rather
+// than this helper's, so pass NotEmpty when it is not.
 func CollectSlice[In, Out any](c *Collector, f Field, in []In, parse func(In) (Out, error), opts ...SliceOption[Out]) []Out {
 	out := make([]Out, 0, len(in))
 	var bad ElementErrors

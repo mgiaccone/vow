@@ -612,3 +612,49 @@ func TestCollectError_AsStopsAtFirstMatch(t *testing.T) {
 		t.Fatalf("expected FieldErrors to return both, got %d", len(fes))
 	}
 }
+
+func TestNotEmpty_RejectsEmptyAndNil(t *testing.T) {
+	for name, in := range map[string][]string{"empty": {}, "nil": nil} {
+		var c vow.Collector
+		out := vow.CollectSlice(&c, fieldTags, in, parseNonBlank, vow.NotEmpty)
+
+		if out != nil {
+			t.Fatalf("%s: expected nil, got %v", name, out)
+		}
+		if c.OK(fieldTags) {
+			t.Fatalf("%s: expected OK to be false", name)
+		}
+		if !errors.Is(c.Err(), vow.ErrBlank) {
+			t.Fatalf("%s: expected errors.Is to reach ErrBlank", name)
+		}
+		if got := vow.FieldErrors(c.Err())[0].Err.Error(); got != "must not be empty" {
+			t.Fatalf("%s: got message %q", name, got)
+		}
+	}
+}
+
+func TestNotEmpty_PassesWhenPopulated(t *testing.T) {
+	var c vow.Collector
+	out := vow.CollectSlice(&c, fieldTags, []string{"a"}, parseNonBlank, vow.NotEmpty)
+
+	if err := c.Err(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(out) != 1 {
+		t.Fatalf("got %v", out)
+	}
+}
+
+// TestNotEmpty_ComposesWithDedup: NotEmpty places no constraint on the element
+// type, so it sits alongside the comparable-constrained options.
+func TestNotEmpty_ComposesWithDedup(t *testing.T) {
+	var c vow.Collector
+	out := vow.CollectSlice(&c, fieldTags, []string{"a", "a"}, parseNonBlank, vow.NotEmpty, vow.Deduped)
+
+	if err := c.Err(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(out) != 1 || out[0] != "a" {
+		t.Fatalf("got %v, want [a]", out)
+	}
+}
