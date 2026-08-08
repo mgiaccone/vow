@@ -209,15 +209,32 @@ func (e ElementErrors) Unwrap() []error {
 	return errs
 }
 
-// SliceOption adjusts or checks the elements CollectSlice parsed. Options run
-// in order, once every element has parsed successfully, and before the result
-// is returned. An option that records a failure makes CollectSlice return nil,
-// exactly as a failing element does.
+// Element pairs a parsed value with the index of the input it came from.
+// Options receive these rather than bare values so that a failure they report
+// names the caller's position, which stays correct even when earlier elements
+// failed to parse and are absent from the slice.
+type Element[Out any] struct {
+	Index int
+	Value Out
+}
+
+// SliceOption adjusts or checks what CollectSlice parsed. Options run in
+// order, after every element has been attempted, and apply to the collection
+// rather than to any one element. An option that records a failure makes
+// CollectSlice return nil, exactly as a failing element does.
+//
+// Options run even when some elements failed to parse, over the ones that
+// succeeded, so a duplicate is not hidden behind an unrelated bad element and
+// discovered only on the next attempt. This is why they take []Element rather
+// than []Out: the surviving values are compacted, so their position in the
+// slice is no longer their position in the caller's input, and only Element
+// still knows the difference.
 //
 // Pass one as the function itself rather than calling it — vow.Deduped, not
 // vow.Deduped() — which is what lets Go infer the element type from the
-// constructor instead of making you name it at every call site.
-type SliceOption[Out any] func(c *Collector, f Field, s []Out) []Out
+// constructor instead of making you name it at every call site. It is also
+// why the built-in options take no parameters.
+type SliceOption[Out any] func(c *Collector, f Field, s []Element[Out]) []Element[Out]
 
 // NotEmpty records a failure when the list has no elements:
 //
@@ -228,12 +245,16 @@ type SliceOption[Out any] func(c *Collector, f Field, s []Out) []Out
 // acceptable belongs to the field, not to the helper, which is why it is an
 // option rather than the default.
 //
+// It stays quiet when the field has already failed, so a list whose elements
+// were all rejected reports those rejections rather than also claiming to be
+// empty — which it was not.
+//
 // It reuses ErrBlank, the sentinel NotBlank and NotZero return: a required
 // list with nothing in it is missing in the same sense a required string with
 // nothing in it is. Unlike the deduplication options it places no constraint
 // on the element type.
-func NotEmpty[T any](c *Collector, f Field, s []T) []T {
-	if len(s) == 0 {
+func NotEmpty[T any](c *Collector, f Field, s []Element[T]) []Element[T] {
+	if len(s) == 0 && c.OK(f) {
 		c.Add(f, Reject("must not be empty", ErrBlank))
 	}
 	return s
@@ -253,15 +274,15 @@ func NotEmpty[T any](c *Collector, f Field, s []T) []T {
 // this runs where it does. "  A@Example.com " and "a@example.com" are
 // different strings but the same Email once sanitize=trim|lower has run, so
 // deduplicating the input would miss the pair entirely.
-func Deduped[T comparable](c *Collector, f Field, s []T) []T {
+func Deduped[T comparable](c *Collector, f Field, s []Element[T]) []Element[T] {
 	seen := make(map[T]struct{}, len(s))
 	out := s[:0:0]
-	for _, v := range s {
-		if _, dup := seen[v]; dup {
+	for _, el := range s {
+		if _, dup := seen[el.Value]; dup {
 			continue
 		}
-		seen[v] = struct{}{}
-		out = append(out, v)
+		seen[el.Value] = struct{}{}
+		out = append(out, el)
 	}
 	return out
 }
@@ -271,24 +292,24 @@ func Deduped[T comparable](c *Collector, f Field, s []T) []T {
 //
 //	cmd.Recipients = vow.CollectSlice(&c, FieldRecipients, raw, types.NewEmail, vow.NoDuplicates)
 //
-// Failures arrive as an ElementErrors carrying the true indices, so they read
-// and unpack exactly like element parse failures — "[3] duplicates item 1" —
-// and errors.Is reaches ErrDuplicate.
+// Failures arrive as an ElementErrors carrying the caller's own indices, so
+// they read and unpack exactly like element parse failures — "[3] duplicates
+// item 1" — and errors.Is reaches ErrDuplicate.
 //
 // Deduped and NoDuplicates are alternatives, not a pair to combine: passing
 // both asks to report duplicates and silently remove them at once.
-func NoDuplicates[T comparable](c *Collector, f Field, s []T) []T {
+func NoDuplicates[T comparable](c *Collector, f Field, s []Element[T]) []Element[T] {
 	seen := make(map[T]int, len(s))
 	var dupes ElementErrors
-	for i, v := range s {
-		if first, dup := seen[v]; dup {
+	for _, el := range s {
+		if first, dup := seen[el.Value]; dup {
 			dupes = append(dupes, ElementError{
-				Index: i,
+				Index: el.Index,
 				Err:   Reject(fmt.Sprintf("duplicates item %d", first), ErrDuplicate),
 			})
 			continue
 		}
-		seen[v] = i
+		seen[el.Value] = el.Index
 	}
 	if len(dupes) > 0 {
 		c.Add(f, dupes)
@@ -315,22 +336,29 @@ func NoDuplicates[T comparable](c *Collector, f Field, s []T) []T {
 // reporting all of them at once is what Collector exists for — so a caller
 // fixing a bad list learns about every bad element in one round-trip.
 //
-// All the failures arrive as a single FieldError holding an ElementErrors,
-// not as one entry per bad element. On any failure CollectSlice returns nil
-// rather than the elements that did parse: a short slice would let a caller
-// who forgot c.Err() act on a subset, which is the quiet failure this helper
-// exists to prevent.
+// Element parse failures arrive as one FieldError holding an ElementErrors,
+// rather than one entry per bad element, so Field goes on naming the field
+// and nothing else. An option that reports adds its own entry, so a list with
+// both a bad element and a duplicate produces two — each carrying the true
+// indices.
 //
-// Options run after every element has parsed, and apply to the collection
-// rather than to any one element — see NotEmpty, Deduped, and NoDuplicates.
-// An option that records a failure makes CollectSlice return nil too, so the
-// contract is the same whichever way the field failed.
+// On any failure CollectSlice returns nil rather than the elements that did
+// parse: a short slice would let a caller who forgot c.Err() act on a subset,
+// which is the quiet failure this helper exists to prevent.
+//
+// Options run after every element has been attempted, and apply to the
+// collection rather than to any one element — see NotEmpty, Deduped, and
+// NoDuplicates. They run even when some elements failed, over the ones that
+// succeeded, so a duplicate is reported in the same round as the bad element
+// beside it instead of surfacing only once that is fixed. An option that
+// records a failure makes CollectSlice return nil too, so the contract is the
+// same whichever way the field failed.
 //
 // An empty or nil in records nothing on its own: there are no elements to
 // fail. Whether a list is allowed to be empty is the field's business rather
 // than this helper's, so pass NotEmpty when it is not.
 func CollectSlice[In, Out any](c *Collector, f Field, in []In, parse func(In) (Out, error), opts ...SliceOption[Out]) []Out {
-	out := make([]Out, 0, len(in))
+	kept := make([]Element[Out], 0, len(in))
 	var bad ElementErrors
 	for i, v := range in {
 		item, err := parse(v)
@@ -338,11 +366,13 @@ func CollectSlice[In, Out any](c *Collector, f Field, in []In, parse func(In) (O
 			bad = append(bad, ElementError{Index: i, Err: err})
 			continue
 		}
-		out = append(out, item)
+		kept = append(kept, Element[Out]{Index: i, Value: item})
 	}
+	// Recorded before the options run, so an option can see that the field
+	// has already failed — NotEmpty relies on it to stay quiet when the list
+	// was full of bad values rather than actually empty.
 	if len(bad) > 0 {
 		c.Add(f, bad)
-		return nil
 	}
 
 	// Compare against a snapshot rather than c.OK(f): the caller may already
@@ -350,10 +380,15 @@ func CollectSlice[In, Out any](c *Collector, f Field, in []In, parse func(In) (O
 	// call's to report on.
 	before := len(c.errs)
 	for _, opt := range opts {
-		out = opt(c, f, out)
+		kept = opt(c, f, kept)
 	}
-	if len(c.errs) > before {
+	if len(bad) > 0 || len(c.errs) > before {
 		return nil
+	}
+
+	out := make([]Out, len(kept))
+	for i, el := range kept {
+		out[i] = el.Value
 	}
 	return out
 }

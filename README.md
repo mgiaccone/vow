@@ -375,10 +375,32 @@ the same `Email` once `sanitize=trim|lower` has run, so checking the raw
 input would miss the pair. See
 [`example/broadcast.go`](example/broadcast.go).
 
-Write your own with `vow.SliceOption[Out]`, a
-`func(*vow.Collector, vow.Field, []Out) []Out` that runs after every element
-has parsed. One that records a failure makes `CollectSlice` return `nil`, so
-the contract is the same whichever way the field failed.
+**Options run even when some elements failed to parse**, over the ones that
+succeeded, so a duplicate is reported in the same round as the bad element
+beside it rather than surfacing only once that is fixed:
+
+```
+Recipients[1] must be a valid email address
+Recipients[2] duplicates item 0
+```
+
+Write your own with `vow.SliceOption[Out]`:
+
+```go
+type SliceOption[Out any] func(*Collector, Field, []Element[Out]) []Element[Out]
+
+type Element[Out any] struct {
+	Index int      // the caller's index, not a position in this slice
+	Value Out
+}
+```
+
+It takes `[]Element` rather than `[]Out` for one reason: once a failed element
+is dropped, the survivors are compacted, so position 1 in the slice may be
+element 2 of the input. Only `Element` still knows the difference, and
+reporting the wrong index would be worse than reporting none. An option that
+records a failure makes `CollectSlice` return `nil`, so the contract is the
+same whichever way the field failed.
 
 Parse fields with those three rather than calling a constructor yourself and
 passing the error to `Add`. A bare `c.Add(f, err)` after a constructor reads

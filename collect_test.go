@@ -441,14 +441,14 @@ func TestDeduped_KeepsFirstAppearanceOrder(t *testing.T) {
 	}
 }
 
-// TestDeduped_DoesNotClobberInput: Deduped filters in place over a fresh
-// backing array, so a caller's own slice must survive being passed to it.
+// TestDeduped_DoesNotClobberInput: Deduped filters over a fresh backing
+// array, so a caller's own slice must survive being passed to it.
 func TestDeduped_DoesNotClobberInput(t *testing.T) {
 	var c vow.Collector
-	in := []string{"a", "a", "b"}
+	in := []vow.Element[string]{{Index: 0, Value: "a"}, {Index: 1, Value: "a"}, {Index: 2, Value: "b"}}
 	vow.Deduped(&c, fieldTags, in)
 
-	if in[0] != "a" || in[1] != "a" || in[2] != "b" {
+	if in[0].Value != "a" || in[1].Value != "a" || in[2].Value != "b" {
 		t.Fatalf("input was modified: %v", in)
 	}
 }
@@ -494,20 +494,79 @@ func TestNoDuplicates_SilentWhenUnique(t *testing.T) {
 	}
 }
 
-// TestSliceOptions_SkippedWhenAnElementFailed: options describe the
-// collection, so running them over a list that never fully parsed would
-// report on values the caller never successfully supplied.
-func TestSliceOptions_SkippedWhenAnElementFailed(t *testing.T) {
+// TestSliceOptions_RunOverSurvivorsWhenAnElementFailed: an option must still
+// see the elements that parsed, so a duplicate is not hidden behind an
+// unrelated bad element and discovered only on the next attempt. The
+// survivors keep the caller's own indices, which is why options take
+// []Element rather than []Out.
+func TestSliceOptions_RunOverSurvivorsWhenAnElementFailed(t *testing.T) {
 	var c vow.Collector
-	ran := false
-	spy := func(c *vow.Collector, f vow.Field, s []string) []string {
-		ran = true
+	var saw []vow.Element[string]
+	spy := func(c *vow.Collector, f vow.Field, s []vow.Element[string]) []vow.Element[string] {
+		saw = s
 		return s
 	}
 
-	vow.CollectSlice(&c, fieldTags, []string{"a", ""}, parseNonBlank, spy)
-	if ran {
-		t.Fatal("expected options to be skipped once an element failed")
+	// element 1 fails; 0 and 2 survive and must report as 0 and 2
+	vow.CollectSlice(&c, fieldTags, []string{"a", "", "c"}, parseNonBlank, spy)
+
+	if len(saw) != 2 {
+		t.Fatalf("expected the option to see 2 survivors, got %d", len(saw))
+	}
+	if saw[0].Index != 0 || saw[1].Index != 2 {
+		t.Fatalf("got indices %d and %d, want 0 and 2", saw[0].Index, saw[1].Index)
+	}
+	if saw[0].Value != "a" || saw[1].Value != "c" {
+		t.Fatalf("got values %v", saw)
+	}
+}
+
+// TestNoDuplicates_ReportedAlongsideABadElement is the case this design
+// exists for: a duplicate must not wait for an unrelated parse failure to be
+// fixed first, and its index must be the caller's, not a position in the
+// compacted survivors.
+func TestNoDuplicates_ReportedAlongsideABadElement(t *testing.T) {
+	var c vow.Collector
+	// index: 0="a"  1=bad  2="a" (duplicate of 0)
+	out := vow.CollectSlice(&c, fieldTags, []string{"a", "", "a"}, parseNonBlank, vow.NoDuplicates)
+
+	if out != nil {
+		t.Fatalf("expected nil, got %v", out)
+	}
+
+	fes := vow.FieldErrors(c.Err())
+	if len(fes) != 2 {
+		t.Fatalf("expected the parse failure and the duplicate as separate entries, got %d", len(fes))
+	}
+
+	var parseErrs, dupeErrs vow.ElementErrors
+	if !errors.As(fes[0].Err, &parseErrs) || !errors.As(fes[1].Err, &dupeErrs) {
+		t.Fatal("expected both entries to carry ElementErrors")
+	}
+	if len(parseErrs) != 1 || parseErrs[0].Index != 1 {
+		t.Fatalf("parse failure: got %v, want index 1", parseErrs)
+	}
+	if len(dupeErrs) != 1 || dupeErrs[0].Index != 2 {
+		t.Fatalf("duplicate: got %v, want index 2 — not 1, its position among survivors", dupeErrs)
+	}
+	if dupeErrs[0].Err.Error() != "duplicates item 0" {
+		t.Fatalf("got %q", dupeErrs[0].Err.Error())
+	}
+}
+
+// TestNotEmpty_QuietWhenElementsFailed: the list was not empty, its contents
+// were bad. Reporting both would be misleading.
+func TestNotEmpty_QuietWhenElementsFailed(t *testing.T) {
+	var c vow.Collector
+	vow.CollectSlice(&c, fieldTags, []string{"", ""}, parseNonBlank, vow.NotEmpty)
+
+	for _, fe := range vow.FieldErrors(c.Err()) {
+		if fe.Err.Error() == "must not be empty" {
+			t.Fatal("NotEmpty fired for a list that was full of invalid values")
+		}
+	}
+	if !errors.Is(c.Err(), vow.ErrNotMatch) && !errors.Is(c.Err(), vow.ErrBlank) {
+		t.Fatal("expected the element failures to still be reported")
 	}
 }
 
