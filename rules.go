@@ -19,6 +19,7 @@ var (
 	ErrNotMatch   = errors.New("has an invalid format")
 	ErrNotInSet   = errors.New("is not an allowed value")
 	ErrOutOfRange = errors.New("is out of range")
+	ErrDuplicate  = errors.New("is a duplicate")
 )
 
 // ruleError pairs a transport-neutral message with the sentinel it stands
@@ -35,6 +36,62 @@ type ruleError struct {
 
 func (e ruleError) Error() string { return e.msg }
 func (e ruleError) Unwrap() error { return e.err }
+
+// Reject builds the rejection a rule returns: msg is the whole message, and
+// sentinel is what errors.Is matches against. It is what the built-in rules
+// use internally, exported so a rule you write yourself behaves identically.
+//
+//	var ErrNotEven = errors.New("is not even")
+//
+//	func Even(n int) error {
+//		if n%2 != 0 {
+//			return vow.Reject("must be even", ErrNotEven)
+//		}
+//		return nil
+//	}
+//
+// Prefer this to fmt.Errorf("must be even: %w", ErrNotEven), which appends
+// the sentinel's own text and yields "must be even: is not even" — not a
+// fragment a UI can present after a field name.
+func Reject(msg string, sentinel error) error {
+	return ruleError{msg, sentinel}
+}
+
+// WithMessage returns r with its message replaced by msg, keeping whatever
+// sentinel r's failure carried so errors.Is still reaches it. Use it when a
+// built-in rule checks the right thing but says it in the wrong words:
+//
+//	vow.WithMessage(vow.MaxLen(254), "is too long for an email address")
+//
+// The rule's own sentinel — ErrTooLong here — stays matchable.
+func WithMessage[T any](r Rule[T], msg string) Rule[T] {
+	return func(v T) error {
+		if err := r(v); err != nil {
+			return Reject(msg, err)
+		}
+		return nil
+	}
+}
+
+// WithSentinel returns r with sentinel *added* to its failure, leaving both
+// the message and r's original sentinel intact. Use it to tell two rules
+// apart that would otherwise report the same reason — an email pattern and a
+// postcode pattern both fail with ErrNotMatch:
+//
+//	vow.WithSentinel(vow.Matches(emailPattern, "must be a valid email address"), ErrBadEmail)
+//
+// Both errors.Is(err, ErrBadEmail) and errors.Is(err, vow.ErrNotMatch) then
+// report true. Adding rather than replacing is deliberate: a bad email is
+// still genuinely a format failure, and dropping that would silently stop
+// matching for any handler keyed on the general reason.
+func WithSentinel[T any](r Rule[T], sentinel error) Rule[T] {
+	return func(v T) error {
+		if err := r(v); err != nil {
+			return Reject(err.Error(), errors.Join(sentinel, err))
+		}
+		return nil
+	}
+}
 
 // NotBlank rejects a string that is empty once leading and trailing
 // whitespace is removed.

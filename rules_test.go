@@ -210,3 +210,127 @@ func TestNonNegative_RejectsNegative(t *testing.T) {
 		t.Fatalf("got message %q, want %q", err.Error(), want)
 	}
 }
+
+var errNotEven = errors.New("is not even")
+
+func even(n int) error {
+	if n%2 != 0 {
+		return vow.Reject("must be even", errNotEven)
+	}
+	return nil
+}
+
+// TestReject_MessageExcludesSentinelText is the whole reason Reject exists.
+// fmt.Errorf("must be even: %w", errNotEven) would render "must be even: is
+// not even", which is not a fragment a UI can print after a field name.
+func TestReject_MessageExcludesSentinelText(t *testing.T) {
+	err := even(3)
+	if err.Error() != "must be even" {
+		t.Fatalf("got message %q, want %q", err.Error(), "must be even")
+	}
+	if !errors.Is(err, errNotEven) {
+		t.Fatal("expected errors.Is to reach the sentinel")
+	}
+}
+
+func TestReject_SentinelSurvivesFieldError(t *testing.T) {
+	var c vow.Collector
+	c.Add("Count", even(3))
+	if !errors.Is(c.Err(), errNotEven) {
+		t.Fatal("expected errors.Is to reach the sentinel through FieldError and Join")
+	}
+}
+
+func TestWithMessage_ReplacesTextKeepsSentinel(t *testing.T) {
+	r := vow.WithMessage(vow.MaxLen(3), "is too long for a code")
+	err := r("abcd")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if err.Error() != "is too long for a code" {
+		t.Fatalf("got message %q", err.Error())
+	}
+	if !errors.Is(err, vow.ErrTooLong) {
+		t.Fatal("expected the rule's own sentinel to stay reachable")
+	}
+}
+
+// TestWithMessage_OverBareSentinelRule covers the other rule shape: NotBlank
+// returns ErrBlank itself rather than a ruleError, so the wrapping has to
+// work on a bare sentinel too.
+func TestWithMessage_OverBareSentinelRule(t *testing.T) {
+	r := vow.WithMessage(vow.Rule[string](vow.NotBlank), "we need this")
+	err := r("  ")
+	if err.Error() != "we need this" {
+		t.Fatalf("got message %q", err.Error())
+	}
+	if !errors.Is(err, vow.ErrBlank) {
+		t.Fatal("expected ErrBlank to stay reachable")
+	}
+}
+
+// TestWithSentinel_AddsWithoutReplacing is the decision this combinator turns
+// on: a bad email is still genuinely a format failure, so a handler keyed on
+// the general reason must keep matching alongside the specific one.
+func TestWithSentinel_AddsWithoutReplacing(t *testing.T) {
+	errBadEmail := errors.New("is not a valid email")
+	pattern := regexp.MustCompile(`^[^@\s]+@[^@\s]+$`)
+	r := vow.WithSentinel(vow.Matches(pattern, "must be a valid email address"), errBadEmail)
+
+	err := r("nope")
+	if err == nil {
+		t.Fatal("expected an error")
+	}
+	if !errors.Is(err, errBadEmail) {
+		t.Fatal("expected the added sentinel to match")
+	}
+	if !errors.Is(err, vow.ErrNotMatch) {
+		t.Fatal("expected the rule's original sentinel to still match")
+	}
+	if err.Error() != "must be a valid email address" {
+		t.Fatalf("WithSentinel must not change the message, got %q", err.Error())
+	}
+}
+
+func TestWithSentinel_OverBareSentinelRule(t *testing.T) {
+	errRequired := errors.New("must be supplied")
+	r := vow.WithSentinel(vow.Rule[string](vow.NotBlank), errRequired)
+	err := r("")
+	if !errors.Is(err, errRequired) || !errors.Is(err, vow.ErrBlank) {
+		t.Fatalf("expected both sentinels to match, got %v", err)
+	}
+	if err.Error() != "is required" {
+		t.Fatalf("got message %q", err.Error())
+	}
+}
+
+// TestCombinators_ComposeEitherOrder: the custom message wins and every
+// sentinel involved stays reachable, whichever way round they are applied.
+func TestCombinators_ComposeEitherOrder(t *testing.T) {
+	errMine := errors.New("is mine")
+
+	outer := vow.WithSentinel(vow.WithMessage(vow.MaxLen(3), "custom"), errMine)
+	inner := vow.WithMessage(vow.WithSentinel(vow.MaxLen(3), errMine), "custom")
+
+	for name, r := range map[string]vow.Rule[string]{"sentinel(message)": outer, "message(sentinel)": inner} {
+		err := r("abcd")
+		if err.Error() != "custom" {
+			t.Fatalf("%s: got message %q, want %q", name, err.Error(), "custom")
+		}
+		if !errors.Is(err, errMine) {
+			t.Fatalf("%s: expected the added sentinel to match", name)
+		}
+		if !errors.Is(err, vow.ErrTooLong) {
+			t.Fatalf("%s: expected ErrTooLong to stay reachable", name)
+		}
+	}
+}
+
+func TestCombinators_PassSuccessThrough(t *testing.T) {
+	if err := vow.WithMessage(vow.MaxLen(10), "nope")("ok"); err != nil {
+		t.Fatalf("WithMessage altered a success: %v", err)
+	}
+	if err := vow.WithSentinel(vow.MaxLen(10), errNotEven)("ok"); err != nil {
+		t.Fatalf("WithSentinel altered a success: %v", err)
+	}
+}
