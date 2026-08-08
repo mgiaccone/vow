@@ -276,3 +276,250 @@ func TestFieldError_ErrorString(t *testing.T) {
 		t.Fatalf("expected field name in error string, got %q", fe.Error())
 	}
 }
+
+const fieldRecipients vow.Field = "Recipients"
+
+func TestCollectSlice_AllValid(t *testing.T) {
+	var c vow.Collector
+	out := vow.CollectSlice(&c, fieldRecipients, []string{"a", "b", "c"}, parseNonBlank)
+
+	if err := c.Err(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(out) != 3 || out[0] != "a" || out[2] != "c" {
+		t.Fatalf("got %v, want [a b c] in order", out)
+	}
+}
+
+func TestCollectSlice_OneInvalid_RecordsExactlyOneEntry(t *testing.T) {
+	var c vow.Collector
+	out := vow.CollectSlice(&c, fieldRecipients, []string{"a", "", "c"}, parseNonBlank)
+
+	if out != nil {
+		t.Fatalf("expected nil on failure, got %v", out)
+	}
+	fes := vow.FieldErrors(c.Err())
+	if len(fes) != 1 {
+		t.Fatalf("expected 1 FieldError for the field, got %d: %v", len(fes), fes)
+	}
+	if fes[0].Field != fieldRecipients {
+		t.Fatalf("got field %q", fes[0].Field)
+	}
+}
+
+// TestCollectSlice_KeepsTrueIndices is the behavior the whole design turns
+// on. Elements 1 and 3 of four fail, and they must be reported as 1 and 3 —
+// not 0 and 1, which is what numbering failures by their own order would give.
+func TestCollectSlice_KeepsTrueIndices(t *testing.T) {
+	var c vow.Collector
+	vow.CollectSlice(&c, fieldRecipients, []string{"a", "", "c", ""}, parseNonBlank)
+
+	var ee vow.ElementErrors
+	if !errors.As(vow.FieldErrors(c.Err())[0].Err, &ee) {
+		t.Fatal("expected the FieldError to carry an ElementErrors")
+	}
+	if len(ee) != 2 {
+		t.Fatalf("expected 2 element failures, got %d", len(ee))
+	}
+	if ee[0].Index != 1 || ee[1].Index != 3 {
+		t.Fatalf("got indices %d and %d, want 1 and 3", ee[0].Index, ee[1].Index)
+	}
+}
+
+// TestCollectSlice_AttemptsEveryElement guards a promise to the caller: a bad
+// element must not stop the ones after it from being checked.
+func TestCollectSlice_AttemptsEveryElement(t *testing.T) {
+	var c vow.Collector
+	calls := 0
+	parse := func(s string) (string, error) {
+		calls++
+		return parseNonBlank(s)
+	}
+
+	vow.CollectSlice(&c, fieldRecipients, []string{"", "", ""}, parse)
+	if calls != 3 {
+		t.Fatalf("parse called %d times, want 3 — it stopped early", calls)
+	}
+}
+
+// TestCollectSlice_OKIsFalse is what keeps Field plain rather than indexed:
+// an indexed field would leave this guard reporting true.
+func TestCollectSlice_OKIsFalse(t *testing.T) {
+	var c vow.Collector
+	vow.CollectSlice(&c, fieldRecipients, []string{"a", "", "c", ""}, parseNonBlank)
+
+	if c.OK(fieldRecipients) {
+		t.Fatal("expected OK to report false while elements are invalid")
+	}
+	if c.OK() {
+		t.Fatal("expected the no-argument form to report false too")
+	}
+}
+
+// TestCollectSlice_ErrorsIsReachesLaterElement walks the whole chain —
+// Join, FieldError, ElementErrors, element error — and does it for an element
+// that is not the first, so a shortcut that only unwrapped one would fail.
+func TestCollectSlice_ErrorsIsReachesLaterElement(t *testing.T) {
+	var c vow.Collector
+	parse := func(s string) (string, error) {
+		if s == "toolong" {
+			return "", vow.MaxLen(3)(s)
+		}
+		return parseNonBlank(s)
+	}
+
+	vow.CollectSlice(&c, fieldRecipients, []string{"a", "b", "toolong"}, parse)
+	if !errors.Is(c.Err(), vow.ErrTooLong) {
+		t.Fatal("expected errors.Is to reach a later element's sentinel")
+	}
+}
+
+// TestCollectSlice_UntypedConsumerLosesNothing: a caller that never heard of
+// ElementErrors still gets every failure, just rendered on one line.
+func TestCollectSlice_UntypedConsumerLosesNothing(t *testing.T) {
+	var c vow.Collector
+	vow.CollectSlice(&c, fieldRecipients, []string{"a", "", "c", ""}, parseNonBlank)
+
+	msg := vow.FieldErrors(c.Err())[0].Err.Error()
+	if !strings.Contains(msg, "[1]") || !strings.Contains(msg, "[3]") {
+		t.Fatalf("expected both indices in the rendered message, got %q", msg)
+	}
+}
+
+func TestCollectSlice_NilAndEmptyRecordNothing(t *testing.T) {
+	var c vow.Collector
+	if out := vow.CollectSlice(&c, fieldRecipients, nil, parseNonBlank); len(out) != 0 {
+		t.Fatalf("expected empty result for nil input, got %v", out)
+	}
+	if out := vow.CollectSlice(&c, fieldRecipients, []string{}, parseNonBlank); len(out) != 0 {
+		t.Fatalf("expected empty result for empty input, got %v", out)
+	}
+	if err := c.Err(); err != nil {
+		t.Fatalf("expected no failures recorded, got %v", err)
+	}
+}
+
+// TestCollectSlice_ClosesOverDiscriminator is why there is no CollectSliceFunc:
+// parse is a func value, so a constructor needing more than the element closes
+// over the rest.
+func TestCollectSlice_ClosesOverDiscriminator(t *testing.T) {
+	var c vow.Collector
+	limit := 3
+
+	out := vow.CollectSlice(&c, fieldRecipients, []string{"ab", "cd"}, func(s string) (string, error) {
+		if err := vow.MaxLen(limit)(s); err != nil {
+			return "", err
+		}
+		return s, nil
+	})
+
+	if err := c.Err(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(out) != 2 {
+		t.Fatalf("got %v", out)
+	}
+}
+
+const fieldTags vow.Field = "Tags"
+
+func TestDeduped_KeepsFirstAppearanceOrder(t *testing.T) {
+	var c vow.Collector
+	out := vow.CollectSlice(&c, fieldTags, []string{"b", "a", "b", "c", "a"}, parseNonBlank, vow.Deduped)
+
+	if err := c.Err(); err != nil {
+		t.Fatalf("Deduped must record nothing, got %v", err)
+	}
+	want := []string{"b", "a", "c"}
+	if len(out) != len(want) {
+		t.Fatalf("got %v, want %v", out, want)
+	}
+	for i := range want {
+		if out[i] != want[i] {
+			t.Fatalf("got %v, want %v", out, want)
+		}
+	}
+}
+
+// TestDeduped_DoesNotClobberInput: Deduped filters in place over a fresh
+// backing array, so a caller's own slice must survive being passed to it.
+func TestDeduped_DoesNotClobberInput(t *testing.T) {
+	var c vow.Collector
+	in := []string{"a", "a", "b"}
+	vow.Deduped(&c, fieldTags, in)
+
+	if in[0] != "a" || in[1] != "a" || in[2] != "b" {
+		t.Fatalf("input was modified: %v", in)
+	}
+}
+
+// TestNoDuplicates_ReportsWithTrueIndices names the earlier element, and uses
+// the same ElementErrors path as a parse failure so consumers need no special
+// case.
+func TestNoDuplicates_ReportsWithTrueIndices(t *testing.T) {
+	var c vow.Collector
+	out := vow.CollectSlice(&c, fieldTags, []string{"a", "b", "a", "b"}, parseNonBlank, vow.NoDuplicates)
+
+	if out != nil {
+		t.Fatalf("expected nil when an option rejects, got %v", out)
+	}
+	if c.OK(fieldTags) {
+		t.Fatal("expected OK to be false")
+	}
+
+	var ee vow.ElementErrors
+	if !errors.As(vow.FieldErrors(c.Err())[0].Err, &ee) {
+		t.Fatal("expected duplicates to arrive as ElementErrors")
+	}
+	if len(ee) != 2 || ee[0].Index != 2 || ee[1].Index != 3 {
+		t.Fatalf("got %v, want repeats at indices 2 and 3", ee)
+	}
+	if ee[0].Err.Error() != "duplicates item 0" {
+		t.Fatalf("got %q", ee[0].Err.Error())
+	}
+	if !errors.Is(c.Err(), vow.ErrDuplicate) {
+		t.Fatal("expected errors.Is to reach ErrDuplicate")
+	}
+}
+
+func TestNoDuplicates_SilentWhenUnique(t *testing.T) {
+	var c vow.Collector
+	out := vow.CollectSlice(&c, fieldTags, []string{"a", "b", "c"}, parseNonBlank, vow.NoDuplicates)
+
+	if err := c.Err(); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(out) != 3 {
+		t.Fatalf("got %v", out)
+	}
+}
+
+// TestSliceOptions_SkippedWhenAnElementFailed: options describe the
+// collection, so running them over a list that never fully parsed would
+// report on values the caller never successfully supplied.
+func TestSliceOptions_SkippedWhenAnElementFailed(t *testing.T) {
+	var c vow.Collector
+	ran := false
+	spy := func(c *vow.Collector, f vow.Field, s []string) []string {
+		ran = true
+		return s
+	}
+
+	vow.CollectSlice(&c, fieldTags, []string{"a", ""}, parseNonBlank, spy)
+	if ran {
+		t.Fatal("expected options to be skipped once an element failed")
+	}
+}
+
+// TestSliceOptions_PreexistingFieldErrorDoesNotForceNil guards the snapshot:
+// CollectSlice compares against the error count it saw on entry, so a failure
+// the caller recorded earlier is not mistaken for one of its own options.
+func TestSliceOptions_PreexistingFieldErrorDoesNotForceNil(t *testing.T) {
+	var c vow.Collector
+	c.Add(fieldTags, errors.New("recorded by the caller earlier"))
+
+	out := vow.CollectSlice(&c, fieldTags, []string{"a", "b"}, parseNonBlank, vow.NoDuplicates)
+	if out == nil {
+		t.Fatal("expected the parsed slice back; no option rejected")
+	}
+}

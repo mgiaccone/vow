@@ -304,7 +304,53 @@ cmd.PostalCode = vow.CollectFunc(&c, FieldPostalCode, func() (types.PostalCode, 
 })
 ```
 
-Parse fields with those two rather than calling a constructor yourself and
+A field holding *many* values uses **`CollectSlice`**, which applies the same
+constructor to each element:
+
+```go
+cmd.Recipients = vow.CollectSlice(&c, FieldRecipients, rawRecipients, types.NewEmail)
+```
+
+Every element is attempted, so one bad address doesn't hide the next. On any
+failure the result is `nil` rather than the elements that did parse — a
+shortened slice would let a caller who skipped `c.Err()` broadcast to a
+subset of the intended audience.
+
+**Duplicates are a property of the list, not of the element type**, so they
+are decided per call rather than in the element's `Spec`: the same `Email`
+may repeat freely in one field and not another. Two options cover it, and
+they are alternatives:
+
+```go
+// remove them, keeping first-appearance order
+cmd.Tags = vow.CollectSlice(&c, FieldTags, raw, types.NewTag, vow.Deduped)
+
+// or report them, naming the earlier entry
+cmd.Recipients = vow.CollectSlice(&c, FieldRecipients, raw, types.NewEmail, vow.NoDuplicates)
+// -> Recipients: [2] duplicates item 0
+```
+
+Pass them **as functions, not calls** — `vow.Deduped`, not `vow.Deduped()`.
+That is what lets Go infer the element type from the constructor instead of
+making you write `vow.Deduped[types.Email]()` at every call site.
+
+`NoDuplicates` reports through the same `ElementErrors` path as a parse
+failure, so it needs no special handling downstream and `errors.Is(err,
+vow.ErrDuplicate)` works. `Deduped` reports nothing — it is the one place vow
+discards what you passed without telling you, which is the point of it.
+
+The check runs on **parsed** values, which is the only place it can work:
+`"  Boss@Example.com "` and `"boss@example.com"` are different strings but
+the same `Email` once `sanitize=trim|lower` has run, so checking the raw
+input would miss the pair. See
+[`example/broadcast.go`](example/broadcast.go).
+
+Write your own with `vow.SliceOption[Out]`, a
+`func(*vow.Collector, vow.Field, []Out) []Out` that runs after every element
+has parsed. One that records a failure makes `CollectSlice` return `nil`, so
+the contract is the same whichever way the field failed.
+
+Parse fields with those three rather than calling a constructor yourself and
 passing the error to `Add`. A bare `c.Add(f, err)` after a constructor reads
 as a statement that does nothing when `err` is nil, which is the shape Go's
 explicit error handling exists to avoid.
@@ -336,23 +382,42 @@ only layer that knows the wire format. Illustration, not part of vow's API:
 
 ```go
 var wireNames = map[vow.Field]string{
-	FieldInviter: "inviter_email",
-	FieldInvitee: "invitee_email",
-	FieldRole:    "role",
+	FieldInviter:    "inviter_email",
+	FieldInvitee:    "invitee_email",
+	FieldRole:       "role",
+	FieldRecipients: "recipients",
 }
 
-func toHTTPErrors(err error) map[string]string {
-	out := map[string]string{}
+func toHTTPErrors(err error) map[string][]string {
+	out := map[string][]string{}
 	for _, fe := range vow.FieldErrors(err) {
 		name, ok := wireNames[fe.Field]
 		if !ok {
 			name = string(fe.Field)
 		}
-		out[name] = fe.Error()
+
+		// A list field carries one entry per bad element, each with the
+		// index the caller sent. Skip this and you still get a complete
+		// message from fe.Err.Error() — just not addressable per element.
+		var ee vow.ElementErrors
+		if errors.As(fe.Err, &ee) {
+			for _, el := range ee {
+				key := fmt.Sprintf("%s[%d]", name, el.Index)
+				out[key] = append(out[key], el.Err.Error())
+			}
+			continue
+		}
+
+		out[name] = append(out[name], fe.Err.Error())
 	}
 	return out
 }
 ```
+
+Two details worth copying. Use **`fe.Err.Error()`, not `fe.Error()`** — the
+latter prefixes the Go field name, which you have already supplied as the
+key. And collect into a **slice** of messages: a field can carry more than
+one failure, and a plain `map[string]string` silently keeps only the last.
 
 ## Reference
 
@@ -421,6 +486,73 @@ Anything not here is an ordinary `vow.Rule[T]` you write yourself, as
 | `InRange(lo, hi)` | `ErrOutOfRange` | must be between `lo` and `hi` — inclusive at both ends |
 | `Positive` | `ErrOutOfRange` | must be greater than zero — rejects zero |
 | `NonNegative` | `ErrOutOfRange` | must not be negative — accepts zero |
+
+`ErrDuplicate` is the one sentinel with no rule of its own: it comes from
+[`NoDuplicates`](#reporting-several-failures-at-once), which checks a list
+rather than a value.
+
+`Matches` takes a message because it is the only rule that cannot derive one.
+`MaxLen(254)` knows to say "must be at most 254 characters"; an arbitrary
+regex has nothing to say about itself. The parameter is mandatory there, not
+an optional customization — see below for changing any other rule's message.
+
+### Writing your own rules
+
+A `Rule[T]` is `func(T) error`, so anything with that shape works. What makes
+a rule behave like a built-in is the pair it returns: a **message** for people
+and a **sentinel** for programs. `vow.Reject` builds both:
+
+```go
+var ErrNotEven = errors.New("is not even")
+
+func Even(n int) error {
+	if n%2 != 0 {
+		return vow.Reject("must be even", ErrNotEven)
+	}
+	return nil
+}
+
+// err.Error()               == "must be even"
+// errors.Is(err, ErrNotEven) == true
+```
+
+Reach for `Reject` rather than `fmt.Errorf("must be even: %w", ErrNotEven)`,
+which appends the sentinel's own text and yields `"must be even: is not
+even"` — not a fragment a UI can print after a field name.
+
+**Why both.** The message is prose: it gets reworded, translated, replaced.
+The sentinel is a stable identity that survives all of that *and* survives
+being wrapped in a `FieldError` and joined with others. That is what lets a
+transport layer map failures to error codes, look up a localized message, or
+assert a reason in a test without matching on English:
+
+```go
+if errors.Is(fe.Err, vow.ErrBlank) {
+	code = "MISSING_FIELD"
+}
+```
+
+**Changing a built-in rule's message** — the check is right, the wording
+isn't:
+
+```go
+vow.WithMessage(vow.MaxLen(254), "is too long for an email address")
+// errors.Is(err, vow.ErrTooLong) is still true
+```
+
+**Adding your own sentinel** — two rules would otherwise report the same
+reason, and you need to tell them apart:
+
+```go
+vow.WithSentinel(vow.Matches(emailPattern, "must be a valid email address"), ErrBadEmail)
+// errors.Is(err, ErrBadEmail)     == true
+// errors.Is(err, vow.ErrNotMatch) == true, still
+```
+
+`WithSentinel` **adds** rather than replaces, on purpose: a bad email is
+still genuinely a format failure, so a handler keyed on the general reason
+keeps working alongside one keyed on the specific reason. Both combinators
+work on every rule, built-in or your own, and compose in either order.
 
 ### Reserved identifiers
 

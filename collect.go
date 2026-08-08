@@ -3,6 +3,7 @@ package vow
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 // Field identifies a slot on a struct, e.g. "Inviter". Declare these as
@@ -128,6 +129,171 @@ func CollectFunc[Out any](c *Collector, f Field, parse func() (Out, error)) Out 
 		c.Add(f, err)
 		var zero Out
 		return zero
+	}
+	return out
+}
+
+// ElementError pairs the index of a slice element with the failure that
+// element's constructor returned.
+type ElementError struct {
+	Index int
+	Err   error
+}
+
+// ElementErrors is the error a slice field carries when one or more of its
+// elements failed to parse. CollectSlice records exactly one of these per
+// field, rather than one FieldError per bad element, so that Field keeps
+// naming the field and nothing else — Collector.OK, and any map keyed by
+// Field, go on working unchanged.
+//
+// It also keeps the true element indices. Recording each failure separately
+// would let a consumer grouping by field number them only by their order
+// among failures, reporting 0 and 1 for what were really elements 1 and 3.
+type ElementErrors []ElementError
+
+// Error renders every element failure on one line, each prefixed with its
+// index: "[1] must be a valid email address; [3] is required". A consumer
+// that wants them individually should use errors.As to recover the
+// ElementErrors and read Index off each entry.
+func (e ElementErrors) Error() string {
+	parts := make([]string, len(e))
+	for i, el := range e {
+		parts[i] = fmt.Sprintf("[%d] %s", el.Index, el.Err)
+	}
+	return strings.Join(parts, "; ")
+}
+
+// Unwrap exposes the element failures to errors.Is and errors.As, so a rule
+// sentinel stays reachable from the joined error a Collector returns.
+func (e ElementErrors) Unwrap() []error {
+	errs := make([]error, len(e))
+	for i, el := range e {
+		errs[i] = el.Err
+	}
+	return errs
+}
+
+// SliceOption adjusts or checks the elements CollectSlice parsed. Options run
+// in order, once every element has parsed successfully, and before the result
+// is returned. An option that records a failure makes CollectSlice return nil,
+// exactly as a failing element does.
+//
+// Pass one as the function itself rather than calling it — vow.Deduped, not
+// vow.Deduped() — which is what lets Go infer the element type from the
+// constructor instead of making you name it at every call site.
+type SliceOption[Out any] func(c *Collector, f Field, s []Out) []Out
+
+// Deduped drops later occurrences of a value that already appeared, keeping
+// the order of first appearance:
+//
+//	cmd.Tags = vow.CollectSlice(&c, FieldTags, raw, types.NewTag, vow.Deduped)
+//
+// It records nothing: duplicates are normalized away rather than reported.
+// This is the one place vow discards what the caller sent without saying so,
+// which is the point of it — reach for NoDuplicates when a repeat is a
+// mistake worth surfacing instead.
+//
+// Deduplicating parsed values rather than raw input is deliberate and is why
+// this runs where it does. "  A@Example.com " and "a@example.com" are
+// different strings but the same Email once sanitize=trim|lower has run, so
+// deduplicating the input would miss the pair entirely.
+func Deduped[T comparable](c *Collector, f Field, s []T) []T {
+	seen := make(map[T]struct{}, len(s))
+	out := s[:0:0]
+	for _, v := range s {
+		if _, dup := seen[v]; dup {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	return out
+}
+
+// NoDuplicates records a failure for every repeated element instead of
+// removing it, naming the earlier element it duplicates:
+//
+//	cmd.Recipients = vow.CollectSlice(&c, FieldRecipients, raw, types.NewEmail, vow.NoDuplicates)
+//
+// Failures arrive as an ElementErrors carrying the true indices, so they read
+// and unpack exactly like element parse failures — "[3] duplicates item 1" —
+// and errors.Is reaches ErrDuplicate.
+//
+// Deduped and NoDuplicates are alternatives, not a pair to combine: passing
+// both asks to report duplicates and silently remove them at once.
+func NoDuplicates[T comparable](c *Collector, f Field, s []T) []T {
+	seen := make(map[T]int, len(s))
+	var dupes ElementErrors
+	for i, v := range s {
+		if first, dup := seen[v]; dup {
+			dupes = append(dupes, ElementError{
+				Index: i,
+				Err:   Reject(fmt.Sprintf("duplicates item %d", first), ErrDuplicate),
+			})
+			continue
+		}
+		seen[v] = i
+	}
+	if len(dupes) > 0 {
+		c.Add(f, dupes)
+	}
+	return s
+}
+
+// CollectSlice runs parse against every element of in and records the
+// failures against f on c, returning the parsed elements. parse is the same
+// func(In) (Out, error) that Collect takes, so a value object constructor
+// drops straight in:
+//
+//	cmd.Recipients = vow.CollectSlice(&c, FieldRecipients, raw, types.NewEmail)
+//
+// A constructor needing more than the value closes over the rest, exactly as
+// with CollectFunc, so there is no CollectSlice variant for that case:
+//
+//	cmd.Codes = vow.CollectSlice(&c, FieldCodes, raw, func(s string) (types.PostalCode, error) {
+//		return types.NewPostalCode(s, cmd.Country)
+//	})
+//
+// Every element is attempted. Spec.Parse stops at the first failing rule
+// because that concerns a single value, but a slice is many values, and
+// reporting all of them at once is what Collector exists for — so a caller
+// fixing a bad list learns about every bad element in one round-trip.
+//
+// All the failures arrive as a single FieldError holding an ElementErrors,
+// not as one entry per bad element. On any failure CollectSlice returns nil
+// rather than the elements that did parse: a short slice would let a caller
+// who forgot c.Err() act on a subset, which is the quiet failure this helper
+// exists to prevent.
+//
+// Options run after every element has parsed, and apply to the collection
+// rather than to any one element — see Deduped and NoDuplicates. An option
+// that records a failure makes CollectSlice return nil too, so the contract
+// is the same whichever way the field failed.
+func CollectSlice[In, Out any](c *Collector, f Field, in []In, parse func(In) (Out, error), opts ...SliceOption[Out]) []Out {
+	out := make([]Out, 0, len(in))
+	var bad ElementErrors
+	for i, v := range in {
+		item, err := parse(v)
+		if err != nil {
+			bad = append(bad, ElementError{Index: i, Err: err})
+			continue
+		}
+		out = append(out, item)
+	}
+	if len(bad) > 0 {
+		c.Add(f, bad)
+		return nil
+	}
+
+	// Compare against a snapshot rather than c.OK(f): the caller may already
+	// have recorded a failure for f before calling, and that is not this
+	// call's to report on.
+	before := len(c.errs)
+	for _, opt := range opts {
+		out = opt(c, f, out)
+	}
+	if len(c.errs) > before {
+		return nil
 	}
 	return out
 }
