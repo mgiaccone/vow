@@ -523,3 +523,92 @@ func TestSliceOptions_PreexistingFieldErrorDoesNotForceNil(t *testing.T) {
 		t.Fatal("expected the parsed slice back; no option rejected")
 	}
 }
+
+func TestCollectError_RecoveredByErrorsAs(t *testing.T) {
+	var c vow.Collector
+	c.Add(fieldInviter, vow.NotBlank(""))
+	c.Add(fieldRole, vow.NotBlank(""))
+
+	var ce vow.CollectError
+	if !errors.As(c.Err(), &ce) {
+		t.Fatal("expected errors.As to recover a CollectError")
+	}
+	if len(ce) != 2 || ce[0].Field != fieldInviter || ce[1].Field != fieldRole {
+		t.Fatalf("got %v, want both fields in order", ce)
+	}
+}
+
+// TestCollectError_SurvivesWrapping is what makes it usable as a classifier:
+// a use case that adds context with %w must not hide the kind of error.
+func TestCollectError_SurvivesWrapping(t *testing.T) {
+	var c vow.Collector
+	c.Add(fieldInviter, vow.NotBlank(""))
+
+	wrapped := fmt.Errorf("creating invite: %w", c.Err())
+
+	var ce vow.CollectError
+	if !errors.As(wrapped, &ce) {
+		t.Fatal("expected errors.As to reach through fmt.Errorf")
+	}
+	if !errors.Is(wrapped, vow.ErrBlank) {
+		t.Fatal("expected the sentinel to stay reachable through the wrap")
+	}
+}
+
+// TestCollectError_NilWhenEmpty guards the nil-interface trap: Err is declared
+// to return error, so an empty Collector must yield an untyped nil rather than
+// a nil CollectError boxed in a non-nil interface.
+func TestCollectError_NilWhenEmpty(t *testing.T) {
+	var c vow.Collector
+	if err := c.Err(); err != nil {
+		t.Fatalf("expected untyped nil, got %#v", err)
+	}
+}
+
+// TestCollectError_RenderingUnchanged pins the format errors.Join produced
+// before CollectError replaced it: one field failure per line.
+func TestCollectError_RenderingUnchanged(t *testing.T) {
+	var c vow.Collector
+	c.Add(fieldInviter, vow.NotBlank(""))
+	c.Add(fieldRole, vow.NotBlank(""))
+
+	want := "Inviter: is required\nRole: is required"
+	if got := c.Err().Error(); got != want {
+		t.Fatalf("got %q, want %q", got, want)
+	}
+}
+
+// TestCollectError_IsACopy: mutating what Err handed back must not reach into
+// the Collector, which may still be in use.
+func TestCollectError_IsACopy(t *testing.T) {
+	var c vow.Collector
+	c.Add(fieldInviter, vow.NotBlank(""))
+
+	var ce vow.CollectError
+	errors.As(c.Err(), &ce)
+	ce[0].Field = "Tampered"
+
+	if vow.FieldErrors(c.Err())[0].Field != fieldInviter {
+		t.Fatal("mutating the returned CollectError reached the Collector")
+	}
+}
+
+// TestCollectError_AsStopsAtFirstMatch documents why FieldErrors still exists.
+// Joining two command errors leaves errors.As holding only the first, while
+// FieldErrors returns every field from both.
+func TestCollectError_AsStopsAtFirstMatch(t *testing.T) {
+	var a, b vow.Collector
+	a.Add(fieldInviter, vow.NotBlank(""))
+	b.Add(fieldRole, vow.NotBlank(""))
+
+	joined := errors.Join(a.Err(), b.Err())
+
+	var ce vow.CollectError
+	errors.As(joined, &ce)
+	if len(ce) != 1 {
+		t.Fatalf("expected errors.As to stop at the first collector, got %d", len(ce))
+	}
+	if fes := vow.FieldErrors(joined); len(fes) != 2 {
+		t.Fatalf("expected FieldErrors to return both, got %d", len(fes))
+	}
+}

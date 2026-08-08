@@ -1,7 +1,6 @@
 package vow
 
 import (
-	"errors"
 	"fmt"
 	"strings"
 )
@@ -70,17 +69,54 @@ func (c *Collector) OK(fields ...Field) bool {
 	return true
 }
 
-// Err returns errors.Join of every FieldError recorded so far, or nil if
-// none were.
+// CollectError is what Collector.Err returns: every field failure recorded,
+// in the order they were recorded. It renders and unwraps exactly as the
+// errors.Join it replaced, and exists so that callers have a type to name:
+//
+//	var ce vow.CollectError
+//	if errors.As(err, &ce) {
+//		// this is a validation failure, not a not-found or a bug
+//	}
+//
+// Use the assertion to *classify* an error and FieldErrors to *extract* from
+// it. errors.As stops at the first match, so if two command errors are ever
+// joined together, ce holds only the first collector's fields while
+// FieldErrors returns every field from both.
+type CollectError []FieldError
+
+// Error renders one field failure per line, matching what errors.Join
+// produced before this type existed.
+func (e CollectError) Error() string {
+	parts := make([]string, len(e))
+	for i, fe := range e {
+		parts[i] = fe.Error()
+	}
+	return strings.Join(parts, "\n")
+}
+
+// Unwrap exposes the field failures to errors.Is and errors.As, so a rule
+// sentinel stays reachable through the whole tree.
+func (e CollectError) Unwrap() []error {
+	errs := make([]error, len(e))
+	for i, fe := range e {
+		errs[i] = fe
+	}
+	return errs
+}
+
+// Err returns a CollectError holding every failure recorded so far, or nil if
+// there were none.
+//
+// The return type is error rather than CollectError on purpose: returning a
+// concrete type would put a nil CollectError inside a non-nil error interface
+// at every call site, so `if err != nil` would fire even on success.
 func (c *Collector) Err() error {
 	if len(c.errs) == 0 {
 		return nil
 	}
-	errs := make([]error, len(c.errs))
-	for i, e := range c.errs {
-		errs[i] = e
-	}
-	return errors.Join(errs...)
+	out := make(CollectError, len(c.errs))
+	copy(out, c.errs)
+	return out
 }
 
 // Collect runs parse against in and records any failure against f on c,

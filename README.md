@@ -290,9 +290,26 @@ return cmd, c.Err()
 
 `Collect` runs a constructor and records any failure against a `Field`. It
 returns the zero value on failure, so check `c.Err()` before trusting the
-result. `vow.FieldErrors(err)` walks the joined error and returns every
-`FieldError` in it; use it instead of `errors.As`, which stops at the first
-match and drops the rest.
+result.
+
+`c.Err()` returns a **`vow.CollectError`**, so a caller holding an error from
+several possible sources can tell a validation failure from anything else:
+
+```go
+var ce vow.CollectError
+switch {
+case errors.As(err, &ce):
+	// a validation failure — fields and messages are available
+case errors.Is(err, ErrNotFound):
+	// something else entirely
+}
+```
+
+**Assert to classify, walk to extract.** `errors.As` stops at the first match,
+so if two command errors are ever joined, `ce` holds only the first
+collector's fields. `vow.FieldErrors(err)` walks the whole tree — including
+`errors.Join` and `%w` wrapping — and returns every `FieldError` in it. Use
+it whenever you need them all.
 
 `Collect` takes a `func(In) (Out, error)`. A constructor needing more than the
 value — one whose spec takes parameters — uses **`CollectFunc`**, which takes
