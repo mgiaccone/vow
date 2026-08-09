@@ -4,7 +4,6 @@ package fixture
 
 import (
 	"encoding/json"
-	"github.com/mgiaccone/vow"
 )
 
 func NewLabel(in string) (Label, error) {

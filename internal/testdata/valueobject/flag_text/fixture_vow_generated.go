@@ -2,10 +2,6 @@
 
 package fixture
 
-import (
-	"github.com/mgiaccone/vow"
-)
-
 func NewToken(in string) (Token, error) {
 	v, err := tokenSpec.Parse(in)
 	if err != nil {

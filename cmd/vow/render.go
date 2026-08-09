@@ -84,11 +84,26 @@ func buildImportList(p *pkg) []importSpec {
 	}
 	list = append(list, p.Imports...)
 
-	vowImport := importSpec{Path: p.VowImportPath}
-	if p.VowQualifier != defaultLocalName(p.VowImportPath) {
-		vowImport.Alias = p.VowQualifier
+	// The runtime is imported only when the output actually names it, which
+	// is in exactly two places: the sanitizer chains a tag-declared
+	// sanitize= produces, and an enum's membership parser. A package of
+	// plain value objects with var specs and no sanitizers references
+	// nothing from vow, and importing it anyway makes the generated file
+	// fail to compile.
+	needsVow := len(p.Enums) > 0
+	for _, vo := range p.ValueObjects {
+		if len(vo.Sanitizers) > 0 {
+			needsVow = true
+			break
+		}
 	}
-	list = append(list, vowImport)
+	if needsVow {
+		vowImport := importSpec{Path: p.VowImportPath}
+		if p.VowQualifier != defaultLocalName(p.VowImportPath) {
+			vowImport.Alias = p.VowQualifier
+		}
+		list = append(list, vowImport)
+	}
 
 	sort.Slice(list, func(i, j int) bool { return list[i].Path < list[j].Path })
 	return list

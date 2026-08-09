@@ -2,10 +2,6 @@
 
 package fixture
 
-import (
-	"github.com/mgiaccone/vow"
-)
-
 func NewEmail(in string) (Email, error) {
 	v, err := emailSpec.Parse(in)
 	if err != nil {

@@ -4,7 +4,6 @@ package fixture
 
 import (
 	"encoding/json"
-	"github.com/mgiaccone/vow"
 )
 
 func NewCode(in string, p0 Kind, p1 int) (Code, error) {

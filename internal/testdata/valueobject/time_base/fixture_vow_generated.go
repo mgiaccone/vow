@@ -5,7 +5,6 @@ package fixture
 import (
 	"encoding/json"
 	"fmt"
-	"github.com/mgiaccone/vow"
 	"time"
 )
 

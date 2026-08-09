@@ -5,7 +5,6 @@ package fixture
 import (
 	"database/sql/driver"
 	"fmt"
-	"github.com/mgiaccone/vow"
 )
 
 func NewCode(in string) (Code, error) {

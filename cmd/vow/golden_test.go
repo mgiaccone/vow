@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"flag"
+	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -135,5 +137,79 @@ func UseEmail() {
 	}
 	if !strings.Contains(string(got), "func NewEmail(") {
 		t.Fatalf("expected generated output to define NewEmail, got:\n%s", got)
+	}
+}
+
+// TestFixturesCompile builds every fixture's hand-written source together
+// with the output generated from it. Comparing golden text proves the
+// generator is stable; it says nothing about whether what it wrote is valid
+// Go, and testdata is invisible to `go build` by design — which is exactly
+// how a package of plain value objects came to be emitted with an unused
+// runtime import that no test noticed.
+//
+// The fixtures are assembled into one throwaway module, each case a package,
+// so this is a single `go build` rather than one per case. A replace
+// directive points at the repo, so nothing is downloaded.
+func TestFixturesCompile(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping compile check in -short mode")
+	}
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("no go toolchain on PATH")
+	}
+
+	repo, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatalf("resolving repo root: %v", err)
+	}
+
+	mod := t.TempDir()
+	gomod := fmt.Sprintf("module vowfixtures\n\ngo 1.24\n\nrequire github.com/mgiaccone/vow v0.0.0\n\nreplace github.com/mgiaccone/vow => %s\n", repo)
+	if err := os.WriteFile(filepath.Join(mod, "go.mod"), []byte(gomod), 0o644); err != nil {
+		t.Fatalf("writing go.mod: %v", err)
+	}
+
+	roots := []string{"valueobject", "enum", "mixed"}
+	copied := 0
+	for _, root := range roots {
+		src := filepath.Join(repo, "internal", "testdata", root)
+		entries, err := os.ReadDir(src)
+		if err != nil {
+			t.Fatalf("reading %s: %v", src, err)
+		}
+		for _, e := range entries {
+			if !e.IsDir() {
+				continue
+			}
+			// Flattened as <root>_<case> so two roots may share a case name.
+			dst := filepath.Join(mod, root+"_"+e.Name())
+			if err := os.MkdirAll(dst, 0o755); err != nil {
+				t.Fatalf("creating %s: %v", dst, err)
+			}
+			files, err := filepath.Glob(filepath.Join(src, e.Name(), "*.go"))
+			if err != nil {
+				t.Fatalf("globbing %s: %v", e.Name(), err)
+			}
+			for _, f := range files {
+				b, err := os.ReadFile(f)
+				if err != nil {
+					t.Fatalf("reading %s: %v", f, err)
+				}
+				if err := os.WriteFile(filepath.Join(dst, filepath.Base(f)), b, 0o644); err != nil {
+					t.Fatalf("writing %s: %v", f, err)
+				}
+			}
+			copied++
+		}
+	}
+	if copied == 0 {
+		t.Fatal("no fixtures found to compile")
+	}
+
+	cmd := exec.Command("go", "build", "./...")
+	cmd.Dir = mod
+	cmd.Env = append(os.Environ(), "GOFLAGS=-mod=mod")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("generated fixtures do not compile (%d packages):\n%s", copied, out)
 	}
 }
