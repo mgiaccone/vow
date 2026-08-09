@@ -16,6 +16,21 @@ func specVarName(typeName string) string {
 	return lowerLeadingRun(typeName) + "Spec"
 }
 
+// generatorFuncName derives the conventional generator function name for a
+// value object type, by the same rule as specVarName.
+//
+//	PhoneNumberID -> phoneNumberIDGenerator
+//
+// Unlike a spec, a generator is optional: a package that declares no such
+// func simply gets no Generate<T>. Detection is by name rather than by a
+// field on Spec because the generator never runs user code — it reads source
+// and must work on a package that does not compile — so it cannot test a
+// field for nil, and inspecting a composite literal for the key has blind
+// spots that a name lookup does not.
+func generatorFuncName(typeName string) string {
+	return lowerLeadingRun(typeName) + "Generator"
+}
+
 func lowerLeadingRun(name string) string {
 	runes := []rune(name)
 	n := len(runes)

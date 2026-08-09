@@ -35,6 +35,15 @@ func Must{{.Name}}(in {{.BaseType}}{{.ParamSignature}}) {{.Name}} {
 	}
 	return v
 }
+{{if .HasGenerator}}
+func Generate{{.Name}}({{.ParamListSignature}}) {{.Name}} {
+	v, err := New{{.Name}}({{.GeneratorFunc}}(){{if .ParamNames}}, {{.ParamNames}}{{end}})
+	if err != nil {
+		panic(err)
+	}
+	return v
+}
+{{end}}
 
 func (x {{.Name}}) Unwrap() {{.BaseType}} { return x.{{.FieldName}} }
 

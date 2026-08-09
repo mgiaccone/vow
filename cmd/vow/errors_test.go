@@ -471,3 +471,85 @@ func TestNoTypesFound_StaleOutputNamed(t *testing.T) {
 		t.Fatalf("error must say the stale file can be deleted, got %q", err.Error())
 	}
 }
+
+// TestRejections_Generator covers the rejections specific to a package
+// declaring a <name>Generator func.
+func TestRejections_Generator(t *testing.T) {
+	cases := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{
+			name: "generator takes parameters",
+			src: `package fixture
+import "github.com/mgiaccone/vow"
+var idSpec = vow.Spec[string]{}
+func idGenerator(prefix string) string { return prefix }
+type ID struct {
+	v string ` + bq + `vow:"json"` + bq + `
+}
+`,
+			want: `generator idGenerator must take no parameters`,
+		},
+		{
+			name: "generated Generate<T> collides with an existing declaration",
+			src: `package fixture
+import "github.com/mgiaccone/vow"
+var idSpec = vow.Spec[string]{}
+func idGenerator() string { return "x" }
+func GenerateID() string { return "mine" }
+type ID struct {
+	v string ` + bq + `vow:"json"` + bq + `
+}
+`,
+			want: `generated code declares GenerateID, but that name is already declared at`,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "types.go"), []byte(tc.src), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			_, err := discoverPackage(dir, "fixture_vow_generated.go", "vow", "vow")
+			if err == nil {
+				t.Fatal("expected an error")
+			}
+			if !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("got %q, want it to contain %q", err.Error(), tc.want)
+			}
+		})
+	}
+}
+
+// TestGenerator_AbsentIsNotAnError: a generator is optional, so a package
+// declaring none simply gets no Generate<T>.
+func TestGenerator_AbsentIsNotAnError(t *testing.T) {
+	src := `package fixture
+import "github.com/mgiaccone/vow"
+var idSpec = vow.Spec[string]{}
+type ID struct {
+	v string ` + bq + `vow:"json"` + bq + `
+}
+`
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "types.go"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	p, err := discoverPackage(dir, "fixture_vow_generated.go", "vow", "vow")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if p.ValueObjects[0].HasGenerator() {
+		t.Fatal("expected no generator to be found")
+	}
+	out, err := render(p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "GenerateID") {
+		t.Fatal("emitted Generate<T> for a type with no generator")
+	}
+}

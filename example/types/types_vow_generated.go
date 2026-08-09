@@ -111,6 +111,64 @@ func (x *Email) Scan(src any) error {
 	return nil
 }
 
+func NewEventID(in string) (EventID, error) {
+	v, err := eventIDSpec.Parse(in)
+	if err != nil {
+		return EventID{}, err
+	}
+	return EventID{v: v}, nil
+}
+
+func MustEventID(in string) EventID {
+	v, err := NewEventID(in)
+	if err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func GenerateEventID() EventID {
+	v, err := NewEventID(eventIDGenerator())
+	if err != nil {
+		panic(err)
+	}
+	return v
+}
+
+func (x EventID) Unwrap() string { return x.v }
+
+func (x EventID) IsZero() bool { return x == EventID{} }
+
+func (x EventID) String() string {
+	return x.v
+}
+
+func (x EventID) MarshalJSON() ([]byte, error) { return json.Marshal(x.v) }
+
+func (x EventID) MarshalText() ([]byte, error) {
+	return []byte(x.v), nil
+}
+
+func (x EventID) Value() (driver.Value, error) {
+	return x.v, nil
+}
+
+func (x *EventID) Scan(src any) error {
+	if src == nil {
+		*x = EventID{}
+		return nil
+	}
+	switch v := src.(type) {
+	case string:
+		x.v = v
+	case []byte:
+		x.v = string(v)
+	default:
+		return fmt.Errorf("EventID.Scan: unsupported type %T", src)
+	}
+	return nil
+}
+
 func NewExpiry(in time.Time) (Expiry, error) {
 	v, err := expirySpec.Parse(in)
 	if err != nil {

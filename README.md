@@ -128,16 +128,20 @@ _, err = types.NewEmail("not-an-email")
 
 #### Naming
 
-A tagged type is matched to its `Spec` **by name**. With no `spec=` option,
-`vow` lowercases the leading run of capitals — keeping the capital that starts
-the next word — and appends `Spec`:
+`vow` connects a type to the code that supports it **by name**, never by file
+layout or proximity. It lowercases the leading run of capitals — keeping the
+capital that starts the next word — and appends a suffix:
 
-| Type | Expected spec name |
-|---|---|
-| `Email` | `emailSpec` |
-| `URLPath` | `urlPathSpec` |
-| `URL` | `urlSpec` |
-| `ID` | `idSpec` |
+| Type | Its spec | Its generator, if any |
+|---|---|---|
+| `Email` | `emailSpec` | `emailGenerator` |
+| `URLPath` | `urlPathSpec` | `urlPathGenerator` |
+| `URL` | `urlSpec` | `urlGenerator` |
+| `ID` | `idSpec` | `idGenerator` |
+
+The spec is **required**; the generator is **optional** and only changes what
+is generated if you declare it — see [Minting a value instead of parsing
+one](#minting-a-value-instead-of-parsing-one).
 
 - **The spec must be package-level.** Declared inside a function or in a
   `_test.go` file, it won't be found; `vow` errors and names what it expected.
@@ -154,6 +158,48 @@ the next word — and appends `Spec`:
 
 Enums need none of this: membership comes from the `const` block, so there is
 no `Spec` to name and `spec=` is rejected.
+
+#### Minting a value instead of parsing one
+
+Some values aren't parsed from input, they're created — an event id, a
+correlation id. Declare a `<name>Generator` func and `vow` adds a constructor
+that needs no input and returns no error:
+
+```go
+func eventIDGenerator() string {
+	return fmt.Sprintf("evt_%08x", counter.Add(1))
+}
+
+type EventID struct {
+	v string `vow:"json,sql,text"`
+}
+```
+
+```go
+func GenerateEventID() EventID
+```
+
+Found by name, exactly as `eventIDSpec` is — there's no tag option, and a
+type with no such func generates precisely what it did before.
+
+**It still parses.** `Generate<T>` runs the generated value through the same
+spec and panics if it fails, so a generator that drifts from its rules is
+caught rather than trusted. That makes it `Must<T>` with the value supplied
+for you, and it's why the signature can drop the error.
+
+`New<T>` and `Must<T>` remain — an id read back from a database still arrives
+as a string that has to be checked. The generator takes **no parameters**;
+`vow` rejects one that does, since a value needing an argument to be built
+isn't one it can mint on its own. If the *spec* takes parameters, `Generate<T>`
+takes those, because parsing needs them:
+
+```go
+func postalCodeSpec(c Country) vow.Spec[string]
+func postalCodeGenerator() string
+// -> func GeneratePostalCode(c Country) PostalCode
+```
+
+See [`example/types/eventid.go`](example/types/eventid.go).
 
 #### When validation needs another value
 
@@ -321,6 +367,8 @@ cmd.PostalCode = vow.CollectFunc(&c, FieldPostalCode, func() (types.PostalCode, 
 })
 ```
 
+#### Fields that hold a list
+
 A field holding *many* values uses **`CollectSlice`**, which applies the same
 constructor to each element:
 
@@ -402,15 +450,22 @@ reporting the wrong index would be worse than reporting none. An option that
 records a failure makes `CollectSlice` return `nil`, so the contract is the
 same whichever way the field failed.
 
-Parse fields with those three rather than calling a constructor yourself and
-passing the error to `Add`. A bare `c.Add(f, err)` after a constructor reads
-as a statement that does nothing when `err` is nil, which is the shape Go's
-explicit error handling exists to avoid.
+Two similarly named types travel together here, one per direction:
+`Element[Out]{Index, Value}` is a value that **parsed**, handed to an option;
+`ElementError{Index, Err}` is one that **failed**, handed back to the caller.
+Both carry the caller's index.
 
-**`Add` is for the rules a `Spec` can't express.** A check spanning two fields
-has no single value to construct, so it fits neither `Collect` nor
-`CollectFunc`. Guard it with `c.OK`, which reports whether the named fields
-parsed:
+#### Rules a `Spec` can't express
+
+Parse fields with `Collect`, `CollectFunc`, or `CollectSlice` rather than
+calling a constructor yourself and passing the error to `Add`. A bare
+`c.Add(f, err)` after a constructor reads as a statement that does nothing
+when `err` is nil, which is the shape Go's explicit error handling exists to
+avoid.
+
+**`Add` is for what a `Spec` can't say.** A check spanning two fields has no
+single value to construct, so it fits none of the three. Guard it with
+`c.OK`, which reports whether the named fields parsed:
 
 ```go
 var errSameAsInviter = errors.New("must not be the same as the inviter")
@@ -428,6 +483,8 @@ is true after a *successful* parse, so the guard skips checks that should run.
 `Add` ignores a nil error, so a rule that returns one needs no `if`:
 `c.Add(FieldExpiresAt, checkExpiry(expiresAt, now))`.
 [`example/invite.go`](example/invite.go) has the full constructor.
+
+#### Turning failures into a response
 
 Mapping a `vow.Field` to a wire name belongs in your transport adapter, the
 only layer that knows the wire format. Illustration, not part of vow's API:
@@ -448,9 +505,10 @@ func toHTTPErrors(err error) map[string][]string {
 			name = string(fe.Field)
 		}
 
-		// A list field carries one entry per bad element, each with the
-		// index the caller sent. Skip this and you still get a complete
-		// message from fe.Err.Error() — just not addressable per element.
+		// A list field carries an ElementErrors — one ElementError per bad
+		// element, each with the index the caller sent. Skip this and you
+		// still get a complete message from fe.Err.Error(), just not
+		// addressable per element.
 		var ee vow.ElementErrors
 		if errors.As(fe.Err, &ee) {
 			for _, el := range ee {
@@ -615,6 +673,7 @@ error inside the generated file:
 | Declaration | Reserved |
 |---|---|
 | any tagged type or enum | `New<T>`, `Must<T>` |
+| type with a `<name>Generator` | `Generate<T>` (e.g. `GenerateEventID`) |
 | spec with `sanitize=`, no parameters | `<name>Parser` (e.g. `emailParser`) |
 | spec with `sanitize=`, with parameters | `<name>Sanitizer` (e.g. `postalCodeSanitizer`) |
 | enum | `<T>Values`, `<name>Parser`, `<name>Values` (e.g. `RoleValues`, `roleParser`, `roleValues`) |
@@ -626,6 +685,7 @@ For a tagged type `T` over base type `Base`:
 ```go
 func New<T>(in Base) (T, error)              // spec parameters follow the value
 func Must<T>(in Base) T
+func Generate<T>() T                         // only with a <name>Generator func
 func (x T) Unwrap() Base
 func (x T) IsZero() bool                     // x == T{}
 func (x T) String() string                   // direct return for string bases,

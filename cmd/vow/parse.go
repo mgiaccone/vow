@@ -286,8 +286,12 @@ func checkNameCollisions(decls packageDecls, valueObjects []*valueObject, enums 
 
 	for _, vo := range valueObjects {
 		const rename = "rename the existing declaration"
-		for _, generated := range []string{"New" + vo.Name, "Must" + vo.Name} {
-			if err := claim(vo.Pos, vo.Name, generated, rename); err != nil {
+		generated := []string{"New" + vo.Name, "Must" + vo.Name}
+		if vo.HasGenerator() {
+			generated = append(generated, "Generate"+vo.Name)
+		}
+		for _, name := range generated {
+			if err := claim(vo.Pos, vo.Name, name, rename); err != nil {
 				return err
 			}
 		}
@@ -443,6 +447,19 @@ func resolveValueObject(fset *token.FileSet, table map[string]string, ts *ast.Ty
 		return nil, errAt(pos, typeName, "spec=%s names a var or func that does not exist in this package", specVar)
 	}
 
+	// A generator is optional and found by name, so its absence is silent:
+	// the type simply gets no Generate<T>. A caller who expected one is
+	// calling Generate<T>, so a misspelled generator surfaces as a compile
+	// error at the call site rather than as wrong behavior here.
+	var generatorFunc string
+	genName := generatorFuncName(typeName)
+	if genFn, ok := decls.funcs[genName]; ok {
+		if genFn.Type.Params != nil && len(genFn.Type.Params.List) > 0 {
+			return nil, errAt(fset.Position(genFn.Pos()), typeName, "generator %s must take no parameters; a value that needs one to be built is not one vow can mint, and parameters that select rules belong on the spec func instead", genName)
+		}
+		generatorFunc = genName
+	}
+
 	if selExpr, ok := field.Type.(*ast.SelectorExpr); ok {
 		if ident, ok := selExpr.X.(*ast.Ident); ok {
 			if path, ok := table[ident.Name]; ok {
@@ -462,6 +479,7 @@ func resolveValueObject(fset *token.FileSet, table map[string]string, ts *ast.Ty
 		SpecVar:        specVar,
 		SpecParams:     specParams,
 		SpecIsFuncDecl: specIsFuncDecl,
+		GeneratorFunc:  generatorFunc,
 		Sanitizers:     opts.Sanitizers,
 		HasJSON:        opts.HasJSON,
 		HasSQL:         opts.HasSQL,

@@ -75,11 +75,21 @@ type valueObject struct {
 	// be hoisted. Conflating the two emitted emailSpec.Parse for a
 	// zero-parameter func, which does not compile.
 	SpecIsFuncDecl bool
-	Sanitizers     []string // exported vow sanitizer names in tag order, e.g. ["Trim", "Lower"]
-	HasJSON        bool
-	HasSQL         bool
-	HasText        bool
+
+	// GeneratorFunc is the package-level func that mints a new value, found
+	// by name (see generatorFuncName). Empty when the package declares none,
+	// which is the common case: Generate<T> is emitted only when it is set.
+	GeneratorFunc string
+
+	Sanitizers []string // exported vow sanitizer names in tag order, e.g. ["Trim", "Lower"]
+	HasJSON    bool
+	HasSQL     bool
+	HasText    bool
 }
+
+// HasGenerator reports whether the package declares a generator for this
+// type, and so whether Generate<T> should be emitted.
+func (v *valueObject) HasGenerator() bool { return v.GeneratorFunc != "" }
 
 // SpecHasParams reports whether this type's spec takes parameters, which is
 // what decides hoistability: a Spec that depends on a runtime argument
@@ -108,6 +118,17 @@ func (v *valueObject) ParamSignature() string {
 		parts[i] = p.Name + " " + p.Type
 	}
 	return ", " + strings.Join(parts, ", ")
+}
+
+// ParamListSignature renders the spec parameters as a standalone parameter
+// list — "c Country" — with no leading comma, for Generate<T>, which has no
+// value argument to put first. Empty for a spec taking no parameters.
+func (v *valueObject) ParamListSignature() string {
+	parts := make([]string, len(v.SpecParams))
+	for i, p := range v.SpecParams {
+		parts[i] = p.Name + " " + p.Type
+	}
+	return strings.Join(parts, ", ")
 }
 
 // ParamNames renders the spec parameters as call arguments: "c". A variadic
